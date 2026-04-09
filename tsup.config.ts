@@ -7,14 +7,14 @@ export default defineConfig([
     dts: true,
     sourcemap: true,
     clean: true,
-    target: 'node18',
+    target: 'node24',
   },
   {
     entry: { bin: 'src/bin.ts' },
     format: ['esm'],
     sourcemap: true,
     clean: false,
-    target: 'node18',
+    target: 'node24',
     banner: {
       js: '#!/usr/bin/env node',
     },
