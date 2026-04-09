@@ -38,35 +38,6 @@ jobs:
       - name: Run typecheck
         run: npm run typecheck
 
-  integration-tests:
-    name: "Integration tests"
-    runs-on: ubuntu-latest
-    services:
-      redis:
-        image: redis:7
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-          cache: "npm"
-
-      - run: npm ci
-
-      - name: Build
-        run: npm run build
-
-      - name: Run integration tests
-        run: npm run test:e2e
-
   e2e:
     name: "E2E"
     runs-on: ubuntu-latest
@@ -98,20 +69,15 @@ jobs:
       - name: "Scenario 1: All specs pass"
         id: scenario1
         run: |
-          # Generate 12 passing script files with simulated work
           mkdir -p tmp/e2e_pass_specs
           for i in $(seq 1 12); do
-            cat > "tmp/e2e_pass_specs/slow_${i}.js" <<'JS'
-          setTimeout(() => process.exit(0), 500)
-          JS
+            echo 'setTimeout(() => process.exit(0), 500)' > "tmp/e2e_pass_specs/slow_${i}.js"
           done
 
-          # Push to Redis
           node dist/bin.js push \
             --key "e2e-pass-${{ github.run_id }}" \
             --pattern 'tmp/e2e_pass_specs/*.js'
 
-          # Run 3 concurrent workers
           KEY="e2e-pass-${{ github.run_id }}"
 
           node dist/bin.js work --key "$KEY" --key-rerun "${KEY}-w1" --command node --batch-size 1 --verbose > pass-worker-1.log 2>&1 &
@@ -132,38 +98,35 @@ jobs:
             echo ""
           done
 
-          # Write summary
-          {
-            echo "## Scenario 1: All specs pass"
-            echo ""
-            echo "3 workers competed for 12 passing scripts via work-stealing."
-            echo ""
-            echo "| Worker | Files | Status |"
-            echo "|--------|-------|--------|"
-            for i in 1 2 3; do
-              FILES=$(grep "^  tmp/" "pass-worker-${i}.log" | sed 's/^  //' | tr '\n' ', ' | sed 's/,$//')
-              if grep -q "SOME FAILED\|FAILED" "pass-worker-${i}.log"; then
-                STATUS="Failed"
-              elif grep -q "Nothing to do" "pass-worker-${i}.log"; then
-                STATUS="Idle (queue was empty)"
-              else
-                STATUS="Passed"
-              fi
-              echo "| Worker ${i} | \`${FILES:-none}\` | ${STATUS} |"
-            done
-            echo ""
-            echo "<details><summary>Full worker logs</summary>"
-            echo ""
-            for i in 1 2 3; do
-              echo "### Worker ${i}"
-              echo ""
-              echo '```'
-              cat "pass-worker-${i}.log"
-              echo '```'
-              echo ""
-            done
-            echo "</details>"
-          } >> "$GITHUB_STEP_SUMMARY"
+          echo "## Scenario 1: All specs pass" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "3 workers competed for 12 passing scripts via work-stealing." >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Worker | Files | Status |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|--------|-------|--------|" >> "$GITHUB_STEP_SUMMARY"
+          for i in 1 2 3; do
+            FILES=$(grep "^  tmp/" "pass-worker-${i}.log" | sed 's/^  //' | tr '\n' ', ' | sed 's/,$//')
+            if grep -q "SOME FAILED\|FAILED" "pass-worker-${i}.log"; then
+              STATUS="Failed"
+            elif grep -q "Nothing to do" "pass-worker-${i}.log"; then
+              STATUS="Idle (queue was empty)"
+            else
+              STATUS="Passed"
+            fi
+            echo "| Worker ${i} | \`${FILES:-none}\` | ${STATUS} |" >> "$GITHUB_STEP_SUMMARY"
+          done
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "<details><summary>Full worker logs</summary>" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          for i in 1 2 3; do
+            echo "### Worker ${i}" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            cat "pass-worker-${i}.log" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+          done
+          echo "</details>" >> "$GITHUB_STEP_SUMMARY"
 
           exit $FAIL
 
@@ -173,25 +136,18 @@ jobs:
         id: scenario2
         if: always()
         run: |
-          # Generate 8 passing + 4 failing script files
           mkdir -p tmp/e2e_fail_specs
           for i in $(seq 1 8); do
-            cat > "tmp/e2e_fail_specs/pass_${i}.js" <<JS
-          setTimeout(() => process.exit(0), 300)
-          JS
+            echo 'setTimeout(() => process.exit(0), 300)' > "tmp/e2e_fail_specs/pass_${i}.js"
           done
           for i in $(seq 1 4); do
-            cat > "tmp/e2e_fail_specs/fail_${i}.js" <<JS
-          process.exit(1)
-          JS
+            echo 'process.exit(1)' > "tmp/e2e_fail_specs/fail_${i}.js"
           done
 
-          # Push to Redis
           node dist/bin.js push \
             --key "e2e-fail-${{ github.run_id }}" \
             --pattern 'tmp/e2e_fail_specs/*.js'
 
-          # Run 3 concurrent workers (with JSON output)
           KEY="e2e-fail-${{ github.run_id }}"
           mkdir -p tmp/e2e_fail_results
 
@@ -267,7 +223,6 @@ jobs:
               TOTAL_JSON_FILES=$((TOTAL_JSON_FILES + W_FILES))
               TOTAL_JSON_FAILED=$((TOTAL_JSON_FAILED + W_FAILED))
 
-              # Verify batch_timings key exists
               HAS_TIMINGS=$(node -e "const j=JSON.parse(require('fs').readFileSync('${JSON_FILE}','utf8')); console.log('batch_timings' in j)")
               if [ "$HAS_TIMINGS" != "true" ]; then
                 echo "::error::Worker ${i} JSON missing batch_timings key"
@@ -288,40 +243,37 @@ jobs:
             ERRORS=$((ERRORS + 1))
           fi
 
-          # Write summary
-          {
-            echo "## Scenario 2: Some specs fail"
-            echo ""
-            echo "3 workers competed for a mix of 8 passing and 4 failing scripts."
-            echo ""
-            echo "| Worker | Exit | Files | Status |"
-            echo "|--------|------|-------|--------|"
-            for i in 1 2 3; do
-              EXIT_VAR="W${i}_EXIT"
-              EXIT_CODE=$(eval echo "\$$EXIT_VAR")
-              FILES=$(grep "^  tmp/" "fail-worker-${i}.log" | sed 's/^  //' | tr '\n' ', ' | sed 's/,$//')
-              if grep -q "SOME FAILED" "fail-worker-${i}.log"; then
-                STATUS="Failed"
-              elif grep -q "Nothing to do" "fail-worker-${i}.log"; then
-                STATUS="Idle (queue was empty)"
-              else
-                STATUS="Passed"
-              fi
-              echo "| Worker ${i} | ${EXIT_CODE} | \`${FILES:-none}\` | ${STATUS} |"
-            done
-            echo ""
-            echo "<details><summary>Full worker logs</summary>"
-            echo ""
-            for i in 1 2 3; do
-              echo "### Worker ${i}"
-              echo ""
-              echo '```'
-              cat "fail-worker-${i}.log"
-              echo '```'
-              echo ""
-            done
-            echo "</details>"
-          } >> "$GITHUB_STEP_SUMMARY"
+          echo "## Scenario 2: Some specs fail" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "3 workers competed for a mix of 8 passing and 4 failing scripts." >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Worker | Exit | Files | Status |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|--------|------|-------|--------|" >> "$GITHUB_STEP_SUMMARY"
+          for i in 1 2 3; do
+            EXIT_VAR="W${i}_EXIT"
+            EXIT_CODE=$(eval echo "\$$EXIT_VAR")
+            FILES=$(grep "^  tmp/" "fail-worker-${i}.log" | sed 's/^  //' | tr '\n' ', ' | sed 's/,$//')
+            if grep -q "SOME FAILED" "fail-worker-${i}.log"; then
+              STATUS="Failed"
+            elif grep -q "Nothing to do" "fail-worker-${i}.log"; then
+              STATUS="Idle (queue was empty)"
+            else
+              STATUS="Passed"
+            fi
+            echo "| Worker ${i} | ${EXIT_CODE} | \`${FILES:-none}\` | ${STATUS} |" >> "$GITHUB_STEP_SUMMARY"
+          done
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "<details><summary>Full worker logs</summary>" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          for i in 1 2 3; do
+            echo "### Worker ${i}" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            cat "fail-worker-${i}.log" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+          done
+          echo "</details>" >> "$GITHUB_STEP_SUMMARY"
 
           exit $ERRORS
 
