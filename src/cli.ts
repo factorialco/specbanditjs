@@ -1,0 +1,223 @@
+import { Configuration, SpecbanditError, VERSION } from './configuration.js'
+import { Publisher } from './publisher.js'
+import { RedisQueue } from './redisQueue.js'
+import { Worker } from './worker.js'
+
+function parseArgs(argv: string[]): { flags: Record<string, string>; positional: string[] } {
+  const flags: Record<string, string> = {}
+  const positional: string[] = []
+  let i = 0
+
+  while (i < argv.length) {
+    const arg = argv[i]
+
+    if (arg === '--') {
+      // Everything after -- goes to positional
+      positional.push(...argv.slice(i + 1))
+      break
+    }
+
+    if (arg.startsWith('--')) {
+      const key = arg.slice(2)
+      // Boolean flags
+      if (key === 'verbose' || key === 'help') {
+        flags[key] = 'true'
+        i++
+        continue
+      }
+      // Flags with values
+      const value = argv[i + 1]
+      if (value !== undefined && !value.startsWith('--')) {
+        flags[key] = value
+        i += 2
+      } else {
+        flags[key] = 'true'
+        i++
+      }
+    } else if (arg === '-h') {
+      flags['help'] = 'true'
+      i++
+    } else if (arg === '-v') {
+      flags['version'] = 'true'
+      i++
+    } else {
+      positional.push(arg)
+      i++
+    }
+  }
+
+  return { flags, positional }
+}
+
+async function runPush(argv: string[]): Promise<number> {
+  const { flags, positional } = parseArgs(argv)
+
+  if (flags.help) {
+    console.log(`Usage: specbandit push [options] [files...]
+
+Options:
+  --key KEY            Redis queue key (required, or set SPECBANDIT_KEY)
+  --pattern PATTERN    Glob pattern for file discovery (e.g. 'src/**/*.test.ts')
+  --redis-url URL      Redis URL (default: redis://localhost:6379)
+  --key-ttl SECONDS    TTL for the Redis key (default: 21600 / 6 hours)
+  -h, --help           Show this help`)
+    return 0
+  }
+
+  const config = new Configuration({
+    key: flags.key,
+    redisUrl: flags['redis-url'],
+    keyTtl: flags['key-ttl'] ? parseInt(flags['key-ttl'], 10) : undefined,
+  })
+  config.validate()
+
+  const queue = new RedisQueue(config.redisUrl)
+  try {
+    const publisher = new Publisher({
+      key: config.key!,
+      keyTtl: config.keyTtl,
+      queue,
+    })
+
+    const count = await publisher.publish({
+      files: positional.length > 0 ? positional : undefined,
+      pattern: flags.pattern,
+    })
+
+    return count > 0 ? 0 : 1
+  } finally {
+    await queue.close()
+  }
+}
+
+async function runWork(argv: string[]): Promise<number> {
+  const { flags } = parseArgs(argv)
+
+  if (flags.help) {
+    console.log(`Usage: specbandit work [options]
+
+Options:
+  --key KEY              Redis queue key (required, or set SPECBANDIT_KEY)
+  --command CMD          Command to run with file paths (required, or set SPECBANDIT_COMMAND)
+  --command-opts OPTS    Extra options forwarded to the command (space-separated)
+  --batch-size N         Files per batch (default: 5)
+  --redis-url URL        Redis URL (default: redis://localhost:6379)
+  --key-rerun KEY        Per-runner rerun key for re-run support
+  --key-rerun-ttl SECS   TTL for rerun key (default: 604800 / 1 week)
+  --verbose              Show per-batch file list and full command output
+  --json-out PATH        Write merged JSON results to file
+  -h, --help             Show this help`)
+    return 0
+  }
+
+  const config = new Configuration({
+    key: flags.key,
+    command: flags.command,
+    commandOpts: flags['command-opts'] ? flags['command-opts'].split(/\s+/) : undefined,
+    batchSize: flags['batch-size'] ? parseInt(flags['batch-size'], 10) : undefined,
+    redisUrl: flags['redis-url'],
+    keyRerun: flags['key-rerun'],
+    keyRerunTtl: flags['key-rerun-ttl'] ? parseInt(flags['key-rerun-ttl'], 10) : undefined,
+    verbose: flags.verbose === 'true' ? true : undefined,
+  })
+  config.validateForWork()
+
+  const queue = new RedisQueue(config.redisUrl)
+  try {
+    const worker = new Worker({
+      key: config.key!,
+      command: config.command!,
+      commandOpts: config.commandOpts,
+      batchSize: config.batchSize,
+      keyRerun: config.keyRerun,
+      keyRerunTtl: config.keyRerunTtl,
+      verbose: config.verbose,
+      queue,
+      jsonOut: flags['json-out'] ?? null,
+    })
+
+    return await worker.run()
+  } finally {
+    await queue.close()
+  }
+}
+
+function printUsage(): void {
+  console.log(`specbandit v${VERSION} - Distributed test runner using Redis
+
+Usage:
+  specbandit push [options] [files...]    Enqueue test files into Redis
+  specbandit work [options]               Steal and run test file batches
+
+Push options:
+  --key KEY              Redis queue key (required, or set SPECBANDIT_KEY)
+  --pattern PATTERN      Glob pattern for file discovery (e.g. 'src/**/*.test.ts')
+  --redis-url URL        Redis URL (default: redis://localhost:6379)
+  --key-ttl SECONDS      TTL for the Redis key (default: 21600 / 6 hours)
+
+Work options:
+  --key KEY              Redis queue key (required, or set SPECBANDIT_KEY)
+  --command CMD          Command to run with file paths (required, or set SPECBANDIT_COMMAND)
+  --command-opts OPTS    Extra options forwarded to the command (space-separated)
+  --batch-size N         Files per batch (default: 5, or set SPECBANDIT_BATCH_SIZE)
+  --redis-url URL        Redis URL (default: redis://localhost:6379)
+  --key-rerun KEY        Per-runner rerun key for re-run support
+  --key-rerun-ttl N      TTL for rerun key (default: 604800 / 1 week)
+  --verbose              Show per-batch file list and full command output
+  --json-out PATH        Write merged JSON results to file
+
+Environment variables:
+  SPECBANDIT_KEY              Queue key
+  SPECBANDIT_REDIS_URL        Redis URL
+  SPECBANDIT_COMMAND          Command to run
+  SPECBANDIT_COMMAND_OPTS     Command options (space-separated)
+  SPECBANDIT_BATCH_SIZE       Batch size
+  SPECBANDIT_KEY_TTL          Key TTL in seconds (default: 21600)
+  SPECBANDIT_KEY_RERUN        Per-runner rerun key
+  SPECBANDIT_KEY_RERUN_TTL    Rerun key TTL in seconds (default: 604800)
+  SPECBANDIT_VERBOSE          Enable verbose output (1/true/yes)
+
+File input priority for push:
+  1. stdin (piped)     echo "test/a.test.ts" | specbandit push --key KEY
+  2. --pattern         specbandit push --key KEY --pattern 'test/**/*.test.ts'
+  3. direct args       specbandit push --key KEY test/a.test.ts test/b.test.ts`)
+}
+
+export class CLI {
+  static async run(argv: string[]): Promise<number> {
+    const args = argv.slice()
+    const command = args.shift()
+
+    try {
+      switch (command) {
+        case 'push':
+          return await runPush(args)
+
+        case 'work':
+          return await runWork(args)
+
+        case undefined:
+        case '-h':
+        case '--help':
+          printUsage()
+          return 0
+
+        case '-v':
+        case '--version':
+          console.log(`specbandit ${VERSION}`)
+          return 0
+
+        default:
+          console.error(`Unknown command: ${command}`)
+          printUsage()
+          return 1
+      }
+    } catch (e) {
+      if (e instanceof SpecbanditError) {
+        console.error(`[specbandit] Error: ${e.message}`)
+        return 1
+      }
+      throw e
+    }
+  }
+}

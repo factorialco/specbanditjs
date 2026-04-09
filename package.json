@@ -1,0 +1,52 @@
+{
+  "name": "specbandit",
+  "version": "0.1.0",
+  "description": "Distributed test runner using Redis as a work queue. Push file paths to a Redis list, then multiple CI runners atomically steal batches and execute them via a configurable command.",
+  "author": "Ferran Basora",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "specbandit": "./dist/bin.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "fast-glob": "^3.3.2",
+    "ioredis": "^5.4.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsup": "^8.3.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/factorialco/specbanditjs.git"
+  },
+  "homepage": "https://github.com/factorialco/specbanditjs",
+  "keywords": [
+    "test",
+    "runner",
+    "distributed",
+    "redis",
+    "ci",
+    "parallel",
+    "jest",
+    "vitest",
+    "work-stealing"
+  ]
+}
