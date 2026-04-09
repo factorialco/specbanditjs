@@ -1,0 +1,288 @@
+- generic [ref=e2]:
+  - region
+  - generic [ref=e3]:
+    - link "Skip to content" [ref=e4] [cursor=pointer]:
+      - /url: "#start-of-content"
+    - banner [ref=e6]:
+      - heading "Navigation Menu" [level=2] [ref=e7]
+      - generic [ref=e8]:
+        - link "Homepage" [ref=e10] [cursor=pointer]:
+          - /url: /
+          - img [ref=e11]
+        - generic [ref=e13]:
+          - navigation "Global" [ref=e16]:
+            - list [ref=e17]:
+              - listitem [ref=e18]:
+                - button "Platform" [ref=e20] [cursor=pointer]:
+                  - text: Platform
+                  - img [ref=e21]
+              - listitem [ref=e23]:
+                - button "Solutions" [ref=e25] [cursor=pointer]:
+                  - text: Solutions
+                  - img [ref=e26]
+              - listitem [ref=e28]:
+                - button "Resources" [ref=e30] [cursor=pointer]:
+                  - text: Resources
+                  - img [ref=e31]
+              - listitem [ref=e33]:
+                - button "Open Source" [ref=e35] [cursor=pointer]:
+                  - text: Open Source
+                  - img [ref=e36]
+              - listitem [ref=e38]:
+                - button "Enterprise" [ref=e40] [cursor=pointer]:
+                  - text: Enterprise
+                  - img [ref=e41]
+              - listitem [ref=e43]:
+                - link "Pricing" [ref=e44] [cursor=pointer]:
+                  - /url: https://github.com/pricing
+                  - generic [ref=e45]: Pricing
+          - generic [ref=e46]:
+            - button "Search or jump to…" [ref=e49] [cursor=pointer]:
+              - img [ref=e51]
+            - link "Sign in" [ref=e54] [cursor=pointer]:
+              - /url: /login?return_to=https%3A%2F%2Fgithub.com%2Ffactorialco%2Fspecbandit%2Factions%2Fruns%2F24146315674
+            - link "Sign up" [ref=e55] [cursor=pointer]:
+              - /url: /signup?ref_cta=Sign+up&ref_loc=header+logged+out&ref_page=%2F%3Cuser-name%3E%2F%3Crepo-name%3E%2Factions%2Fworkflow_runs%2Fshow&source=header-repo&source_repo=factorialco%2Fspecbandit
+            - button "Appearance settings" [ref=e58] [cursor=pointer]:
+              - img
+  - main [ref=e62]:
+    - generic [ref=e63]:
+      - generic [ref=e64]:
+        - generic [ref=e65]:
+          - generic [ref=e67]:
+            - img [ref=e68]
+            - link "factorialco" [ref=e71] [cursor=pointer]:
+              - /url: /factorialco
+            - generic [ref=e72]: /
+            - strong [ref=e73]:
+              - link "specbandit" [ref=e74] [cursor=pointer]:
+                - /url: /factorialco/specbandit
+            - generic [ref=e75]: Public
+          - generic [ref=e76]:
+            - list:
+              - listitem [ref=e77]:
+                - link "You must be signed in to change notification settings" [ref=e78] [cursor=pointer]:
+                  - /url: /login?return_to=%2Ffactorialco%2Fspecbandit
+                  - img [ref=e79]
+                  - text: Notifications
+              - listitem [ref=e81]:
+                - link "Fork 0" [ref=e82] [cursor=pointer]:
+                  - /url: /login?return_to=%2Ffactorialco%2Fspecbandit
+                  - img [ref=e83]
+                  - text: Fork
+                  - generic "0" [ref=e85]
+              - listitem [ref=e86]:
+                - link "You must be signed in to star a repository" [ref=e88] [cursor=pointer]:
+                  - /url: /login?return_to=%2Ffactorialco%2Fspecbandit
+                  - img [ref=e89]
+                  - text: Star
+                  - generic "0 users starred this repository" [ref=e91]: "0"
+        - navigation "Repository" [ref=e92]:
+          - list [ref=e93]:
+            - listitem [ref=e94]:
+              - link "Code" [ref=e95] [cursor=pointer]:
+                - /url: /factorialco/specbandit
+                - img [ref=e96]
+                - generic [ref=e98]: Code
+            - listitem [ref=e99]:
+              - link "Issues" [ref=e100] [cursor=pointer]:
+                - /url: /factorialco/specbandit/issues
+                - img [ref=e101]
+                - generic [ref=e104]: Issues
+            - listitem [ref=e105]:
+              - link "Pull requests" [ref=e106] [cursor=pointer]:
+                - /url: /factorialco/specbandit/pulls
+                - img [ref=e107]
+                - generic [ref=e109]: Pull requests
+            - listitem [ref=e110]:
+              - link "Actions" [ref=e111] [cursor=pointer]:
+                - /url: /factorialco/specbandit/actions
+                - img [ref=e112]
+                - generic [ref=e114]: Actions
+            - listitem [ref=e115]:
+              - link "Projects" [ref=e116] [cursor=pointer]:
+                - /url: /factorialco/specbandit/projects
+                - img [ref=e117]
+                - generic [ref=e119]: Projects
+            - listitem [ref=e120]:
+              - link "Security and quality" [ref=e121] [cursor=pointer]:
+                - /url: /factorialco/specbandit/security
+                - img [ref=e122]
+                - generic [ref=e124]: Security and quality
+            - listitem [ref=e125]:
+              - link "Insights" [ref=e126] [cursor=pointer]:
+                - /url: /factorialco/specbandit/pulse
+                - img [ref=e127]
+                - generic [ref=e129]: Insights
+      - generic [ref=e134]:
+        - generic [ref=e137]:
+          - link "CI" [ref=e140] [cursor=pointer]:
+            - /url: /factorialco/specbandit/actions/workflows/ci.yml
+            - img [ref=e141]
+            - generic [ref=e143]: CI
+          - generic [ref=e144]:
+            - generic [ref=e145]:
+              - img "completed successfully:" [ref=e149]
+              - 'heading "Release v0.7.0 #38" [level=1] [ref=e151]':
+                - generic [ref=e152]: "Release v0.7.0 #38"
+            - link "Sign in to view logs" [ref=e155] [cursor=pointer]:
+              - /url: /login?return_to=https%3A%2F%2Fgithub.com%2Ffactorialco%2Fspecbandit%2Factions%2Fruns%2F24146315674
+        - generic [ref=e156]:
+          - navigation "Workflow run" [ref=e162]:
+            - list [ref=e163]:
+              - listitem [ref=e164]:
+                - link "Summary" [ref=e165] [cursor=pointer]:
+                  - /url: /factorialco/specbandit/actions/runs/24146315674
+                  - generic:
+                    - img
+                  - generic [ref=e167]: Summary
+              - generic [ref=e168]:
+                - heading "All jobs" [level=4] [ref=e169]
+                - button "Filter by job status" [ref=e170] [cursor=pointer]:
+                  - img [ref=e171]
+              - listitem [ref=e173]
+              - listitem [ref=e174]:
+                - list [ref=e175]:
+                  - listitem [ref=e176]:
+                    - generic "Loading" [ref=e177]:
+                      - generic [ref=e181]:
+                        - img [ref=e182]
+                        - generic [ref=e185]: Loading
+              - listitem [ref=e186]
+              - listitem [ref=e187]:
+                - heading "Run details" [level=3] [ref=e189]
+                - list "Run details" [ref=e190]:
+                  - listitem [ref=e191]:
+                    - link "Usage" [ref=e192] [cursor=pointer]:
+                      - /url: /factorialco/specbandit/actions/runs/24146315674/usage
+                      - generic:
+                        - img
+                      - generic [ref=e194]: Usage
+                  - listitem [ref=e195]:
+                    - link "Workflow file" [ref=e196] [cursor=pointer]:
+                      - /url: /factorialco/specbandit/actions/runs/24146315674/workflow
+                      - generic:
+                        - img
+                      - generic [ref=e198]: Workflow file
+          - generic [ref=e200]:
+            - region "Workflow run summary" [ref=e201]:
+              - generic [ref=e202]:
+                - generic [ref=e203]:
+                  - generic [ref=e204]: Triggered via push April 8, 2026 16:2220 hours ago
+                  - generic [ref=e205]:
+                    - link "@beagleknight beagleknight" [ref=e206] [cursor=pointer]:
+                      - /url: /beagleknight
+                      - img "@beagleknight" [ref=e207]
+                      - text: beagleknight
+                    - generic [ref=e208]:
+                      - generic [ref=e209]: pushed
+                      - link "e2e5ed5" [ref=e210] [cursor=pointer]:
+                        - /url: /factorialco/specbandit/commit/e2e5ed5b75d13cda2f75ff791c99c624e0e78b49
+                        - img [ref=e211]
+                        - text: e2e5ed5
+                    - link "main" [ref=e213] [cursor=pointer]:
+                      - /url: /factorialco/specbandit/tree/refs/heads/main
+                - generic [ref=e214]:
+                  - generic [ref=e215]: Status
+                  - text: Success
+                - generic [ref=e216]:
+                  - generic [ref=e217]: Total duration
+                  - link "41s" [ref=e218] [cursor=pointer]:
+                    - /url: /factorialco/specbandit/actions/runs/24146315674/usage
+                - generic [ref=e219]:
+                  - generic [ref=e220]: Artifacts
+                  - text: –
+            - region "Workflow run graph" [ref=e221]:
+              - generic [ref=e223]:
+                - generic [ref=e225]:
+                  - heading "ci.yml" [level=2] [ref=e226]:
+                    - link "ci.yml" [ref=e227] [cursor=pointer]:
+                      - /url: /factorialco/specbandit/actions/runs/24146315674/workflow
+                  - generic [ref=e228]: "on: push"
+                - generic [ref=e230]:
+                  - generic [ref=e231]:
+                    - img
+                    - img
+                    - generic [ref=e233]:
+                      - 'link "completed successfully: Unit tests 10s" [ref=e235] [cursor=pointer]':
+                        - /url: /factorialco/specbandit/actions/runs/24146315674/job/70461008770
+                        - generic [ref=e237]:
+                          - img "completed successfully:" [ref=e239]
+                          - generic [ref=e242]: Unit tests
+                          - generic [ref=e243]: 10s
+                      - 'link "completed successfully: E2E 37s" [ref=e245] [cursor=pointer]':
+                        - /url: /factorialco/specbandit/actions/runs/24146315674/job/70461008757
+                        - generic [ref=e247]:
+                          - img "completed successfully:" [ref=e249]
+                          - generic [ref=e252]: E2E
+                          - generic [ref=e253]: 37s
+                      - 'link "completed successfully: Integration tests 28s" [ref=e255] [cursor=pointer]':
+                        - /url: /factorialco/specbandit/actions/runs/24146315674/job/70461008786
+                        - generic [ref=e257]:
+                          - img "completed successfully:" [ref=e259]
+                          - generic [ref=e262]: Integration tests
+                          - generic [ref=e263]: 28s
+                  - generic [ref=e264]:
+                    - paragraph [ref=e265]: Oh hello! Nice to see you.
+                    - paragraph [ref=e266]:
+                      - text: Made with ❤️ by
+                      - link [ref=e267] [cursor=pointer]:
+                        - /url: https://actions.github.io/humans.txt
+                        - text: humans.txt
+                - generic [ref=e268]:
+                  - button "Fit to window" [disabled] [ref=e269]:
+                    - img
+                  - generic [ref=e270]:
+                    - button "Zoom out" [disabled] [ref=e272]:
+                      - img
+                    - button "Zoom in" [disabled] [ref=e274]:
+                      - img
+            - region "Annotations" [ref=e275]:
+              - generic [ref=e276]:
+                - generic [ref=e278]:
+                  - heading "Annotations" [level=2] [ref=e279]
+                  - generic [ref=e280]: 3 warnings
+                - table [ref=e281]:
+                  - rowgroup [ref=e282]:
+                    - 'row "Unit tests Node.js 20 actions are deprecated. The following actions are running on Node.js 20 and may not work as expected: actions/checkout@v4. Actions will be forced to run with Node.js 24 by default starting June 2nd, 2026. Node.js 20 will be removed from the runner on September 16th, 2026. Please check if updated versions of these actions are available that support Node.js 24. To opt into Node.js 24 now, set the FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true environment variable on the runner or in your workflow file. Once Node.js 24 becomes the default, you can temporarily opt out by setting ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/ Show more" [ref=e283]':
+                      - 'cell "Unit tests Node.js 20 actions are deprecated. The following actions are running on Node.js 20 and may not work as expected: actions/checkout@v4. Actions will be forced to run with Node.js 24 by default starting June 2nd, 2026. Node.js 20 will be removed from the runner on September 16th, 2026. Please check if updated versions of these actions are available that support Node.js 24. To opt into Node.js 24 now, set the FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true environment variable on the runner or in your workflow file. Once Node.js 24 becomes the default, you can temporarily opt out by setting ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/ Show more" [ref=e284]':
+                        - generic [ref=e285]:
+                          - img [ref=e287]
+                          - generic [ref=e289]:
+                            - link "Unit tests" [ref=e290] [cursor=pointer]:
+                              - /url: /factorialco/specbandit/actions/runs/24146315674/job/70461008770#step:9:2
+                              - strong [ref=e291]: Unit tests
+                            - generic [ref=e292]:
+                              - generic [ref=e294]:
+                                - text: "Node.js 20 actions are deprecated. The following actions are running on Node.js 20 and may not work as expected: actions/checkout@v4. Actions will be forced to run with Node.js 24 by default starting June 2nd, 2026. Node.js 20 will be removed from the runner on September 16th, 2026. Please check if updated versions of these actions are available that support Node.js 24. To opt into Node.js 24 now, set the FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true environment variable on the runner or in your workflow file. Once Node.js 24 becomes the default, you can temporarily opt out by setting ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true. For more information see:"
+                                - link "https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/" [ref=e295] [cursor=pointer]:
+                                  - /url: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+                              - button "Show more" [ref=e296] [cursor=pointer]
+                    - 'row "Integration tests Node.js 20 actions are deprecated. The following actions are running on Node.js 20 and may not work as expected: actions/checkout@v4. Actions will be forced to run with Node.js 24 by default starting June 2nd, 2026. Node.js 20 will be removed from the runner on September 16th, 2026. Please check if updated versions of these actions are available that support Node.js 24. To opt into Node.js 24 now, set the FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true environment variable on the runner or in your workflow file. Once Node.js 24 becomes the default, you can temporarily opt out by setting ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/ Show more" [ref=e297]':
+                      - 'cell "Integration tests Node.js 20 actions are deprecated. The following actions are running on Node.js 20 and may not work as expected: actions/checkout@v4. Actions will be forced to run with Node.js 24 by default starting June 2nd, 2026. Node.js 20 will be removed from the runner on September 16th, 2026. Please check if updated versions of these actions are available that support Node.js 24. To opt into Node.js 24 now, set the FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true environment variable on the runner or in your workflow file. Once Node.js 24 becomes the default, you can temporarily opt out by setting ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/ Show more" [ref=e298]':
+                        - generic [ref=e299]:
+                          - img [ref=e301]
+                          - generic [ref=e303]:
+                            - link "Integration tests" [ref=e304] [cursor=pointer]:
+                              - /url: /factorialco/specbandit/actions/runs/24146315674/job/70461008786#step:11:2
+                              - strong [ref=e305]: Integration tests
+                            - generic [ref=e306]:
+                              - generic [ref=e308]:
+                                - text: "Node.js 20 actions are deprecated. The following actions are running on Node.js 20 and may not work as expected: actions/checkout@v4. Actions will be forced to run with Node.js 24 by default starting June 2nd, 2026. Node.js 20 will be removed from the runner on September 16th, 2026. Please check if updated versions of these actions are available that support Node.js 24. To opt into Node.js 24 now, set the FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true environment variable on the runner or in your workflow file. Once Node.js 24 becomes the default, you can temporarily opt out by setting ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true. For more information see:"
+                                - link "https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/" [ref=e309] [cursor=pointer]:
+                                  - /url: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+                              - button "Show more" [ref=e310] [cursor=pointer]
+                    - 'row "E2E Node.js 20 actions are deprecated. The following actions are running on Node.js 20 and may not work as expected: actions/checkout@v4. Actions will be forced to run with Node.js 24 by default starting June 2nd, 2026. Node.js 20 will be removed from the runner on September 16th, 2026. Please check if updated versions of these actions are available that support Node.js 24. To opt into Node.js 24 now, set the FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true environment variable on the runner or in your workflow file. Once Node.js 24 becomes the default, you can temporarily opt out by setting ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/ Show more" [ref=e311]':
+                      - 'cell "E2E Node.js 20 actions are deprecated. The following actions are running on Node.js 20 and may not work as expected: actions/checkout@v4. Actions will be forced to run with Node.js 24 by default starting June 2nd, 2026. Node.js 20 will be removed from the runner on September 16th, 2026. Please check if updated versions of these actions are available that support Node.js 24. To opt into Node.js 24 now, set the FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true environment variable on the runner or in your workflow file. Once Node.js 24 becomes the default, you can temporarily opt out by setting ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/ Show more" [ref=e312]':
+                        - generic [ref=e313]:
+                          - img [ref=e315]
+                          - generic [ref=e317]:
+                            - link "E2E" [ref=e318] [cursor=pointer]:
+                              - /url: /factorialco/specbandit/actions/runs/24146315674/job/70461008757#step:15:2
+                              - strong [ref=e319]: E2E
+                            - generic [ref=e320]:
+                              - generic [ref=e322]:
+                                - text: "Node.js 20 actions are deprecated. The following actions are running on Node.js 20 and may not work as expected: actions/checkout@v4. Actions will be forced to run with Node.js 24 by default starting June 2nd, 2026. Node.js 20 will be removed from the runner on September 16th, 2026. Please check if updated versions of these actions are available that support Node.js 24. To opt into Node.js 24 now, set the FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true environment variable on the runner or in your workflow file. Once Node.js 24 becomes the default, you can temporarily opt out by setting ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true. For more information see:"
+                                - link "https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/" [ref=e323] [cursor=pointer]:
+                                  - /url: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+                              - button "Show more" [ref=e324] [cursor=pointer]
