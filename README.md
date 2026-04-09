@@ -1,3 +1,5 @@
+![specbandit logo](specbanditjs.png)
+
 # specbandit
 
 Distributed test runner using Redis as a work queue. One process pushes test file paths to a Redis list; multiple CI runners atomically steal batches and execute them via a configurable command.
