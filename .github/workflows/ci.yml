@@ -20,11 +20,8 @@ jobs:
       - run: npm ci
 
       - name: Run unit tests
-        run: npm run test
-
-      - name: Clear unit test summary
-        if: always()
-        run: echo -n > "$GITHUB_STEP_SUMMARY"
+        run: |
+          GITHUB_STEP_SUMMARY=/dev/null npm run test
 
   typecheck:
     name: "Typecheck"
