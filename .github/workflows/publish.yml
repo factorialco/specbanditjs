@@ -5,14 +5,12 @@ on:
     tags:
       - "v*"
 
-permissions:
-  id-token: write
-  contents: read
-
 jobs:
   publish:
     name: "Publish"
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -21,8 +19,6 @@ jobs:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
 
-      - run: npm install -g npm@latest
-
       - run: npm ci
 
       - name: Build
@@ -30,3 +26,5 @@ jobs:
 
       - name: Publish
         run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
