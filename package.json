@@ -21,7 +21,7 @@
     "prepublishOnly": "npm run build"
   },
   "engines": {
-    "node": ">=24"
+    "node": ">=22"
   },
   "dependencies": {
     "fast-glob": "^3.3.2",
