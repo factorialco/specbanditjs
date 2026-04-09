@@ -1,4 +1,6 @@
-![specbandit logo](specbanditjs.png)
+<p align="center">
+  <img src="specbanditjs.png" alt="specbandit logo" />
+</p>
 
 # specbandit
 
