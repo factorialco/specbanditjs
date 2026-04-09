@@ -20,7 +20,7 @@ This is a TypeScript port of [specbandit](https://github.com/factorialco/specban
 ## Installation
 
 ```bash
-npm install specbandit
+npm install @factorialco/specbandit
 ```
 
 Or run directly:
@@ -109,7 +109,7 @@ CLI flags take precedence over environment variables.
 ### Node.js API
 
 ```typescript
-import { Configuration, Publisher, Worker, RedisQueue } from 'specbandit'
+import { Configuration, Publisher, Worker, RedisQueue } from '@factorialco/specbandit'
 
 // Push
 const queue = new RedisQueue('redis://my-redis:6379')
