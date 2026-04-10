@@ -422,6 +422,104 @@ jobs:
 
           exit $ERRORS
 
+      # ── Scenario 5: Jest adapter — args after `--` forwarded to Jest ──
+
+      - name: "Scenario 5: Jest adapter — args via double dash"
+        id: scenario5
+        if: always()
+        run: |
+          cd test/fixtures/jest-project
+
+          # This scenario mimics Factorial's real invocation pattern:
+          #   specbandit work --adapter jest --key KEY -- --silent --passWithNoTests
+          # Previously, args after `--` were silently dropped (never forwarded to Jest).
+
+          SPECBANDIT="../../../dist/bin.js"
+          KEY="e2e-jest-dashdash-${{ github.run_id }}"
+          node "$SPECBANDIT" push --key "$KEY" \
+            specs/math.test.js specs/strings.test.js specs/arrays.test.js \
+            specs/objects.test.js specs/async.test.js specs/regex.test.js
+
+          mkdir -p jest-dashdash-results
+
+          # Use -- to pass --silent and --passWithNoTests (instead of --command-opts)
+          GITHUB_STEP_SUMMARY= node "$SPECBANDIT" work --key "$KEY" --key-rerun "${KEY}-w1" \
+            --adapter jest --jest-config ./jest.config.js --project-root . \
+            --batch-size 3 --verbose --json-out jest-dashdash-results/w1.json \
+            -- --silent --passWithNoTests > jest-dashdash-w1.log 2>&1 &
+          PID1=$!
+          GITHUB_STEP_SUMMARY= node "$SPECBANDIT" work --key "$KEY" --key-rerun "${KEY}-w2" \
+            --adapter jest --jest-config ./jest.config.js --project-root . \
+            --batch-size 3 --verbose --json-out jest-dashdash-results/w2.json \
+            -- --silent --passWithNoTests > jest-dashdash-w2.log 2>&1 &
+          PID2=$!
+
+          FAIL=0
+          wait $PID1 || FAIL=1
+          wait $PID2 || FAIL=1
+
+          for i in 1 2; do
+            echo "========== Jest Worker ${i} (-- args) =========="
+            cat "jest-dashdash-w${i}.log"
+            echo ""
+          done
+
+          # All workers should succeed (only passing specs)
+          if [ "$FAIL" -ne 0 ]; then
+            echo "::error::Expected all Jest workers to pass with -- args"
+            # Don't exit yet, continue checks
+          fi
+
+          # Verify Jest adapter was used
+          ADAPTER_USED=0
+          for i in 1 2; do
+            if grep -q "\[specbandit:jest\] Setup complete" "jest-dashdash-w${i}.log"; then
+              ADAPTER_USED=1
+            fi
+          done
+          if [ "$ADAPTER_USED" -eq 0 ]; then
+            echo "::error::No worker log contains Jest adapter setup message"
+            FAIL=1
+          fi
+
+          # Must NOT contain "Adapter not initialized" error
+          for i in 1 2; do
+            if grep -q "Adapter not initialized" "jest-dashdash-w${i}.log"; then
+              echo "::error::Worker ${i} hit 'Adapter not initialized' error — args after -- not forwarded?"
+              FAIL=1
+            fi
+          done
+
+          # Every worker must have exhausted the queue or had nothing to do
+          for i in 1 2; do
+            if ! grep -q "Queue exhausted\|Nothing to do" "jest-dashdash-w${i}.log"; then
+              echo "::error::Jest worker ${i} did not exhaust the queue or report nothing to do"
+              FAIL=1
+            fi
+          done
+
+          # JSON validation: all 6 files must have been processed
+          TOTAL_JSON_FILES=0
+          for i in 1 2; do
+            JSON_FILE="jest-dashdash-results/w${i}.json"
+            if [ -f "$JSON_FILE" ]; then
+              W_FILES=$(node -e "const j=JSON.parse(require('fs').readFileSync('${JSON_FILE}','utf8')); console.log(j.summary.total_files)")
+              echo "Worker ${i} JSON: ${W_FILES} files"
+              TOTAL_JSON_FILES=$((TOTAL_JSON_FILES + W_FILES))
+            fi
+          done
+
+          if [ "$TOTAL_JSON_FILES" -ne 6 ]; then
+            echo "::error::Expected 6 total files in merged Jest JSONs (-- args), found $TOTAL_JSON_FILES"
+            FAIL=1
+          fi
+
+          echo "## Scenario 5: Jest adapter — args via double dash" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "2 workers used the Jest adapter with \`-- --silent --passWithNoTests\` pattern." >> "$GITHUB_STEP_SUMMARY"
+
+          exit $FAIL
+
       # ── Final gate ──
 
       - name: "Check all scenarios passed"
@@ -432,6 +530,7 @@ jobs:
           if [ "${{ steps.scenario2.outcome }}" != "success" ]; then FAILED="$FAILED scenario2"; fi
           if [ "${{ steps.scenario3.outcome }}" != "success" ]; then FAILED="$FAILED scenario3"; fi
           if [ "${{ steps.scenario4.outcome }}" != "success" ]; then FAILED="$FAILED scenario4"; fi
+          if [ "${{ steps.scenario5.outcome }}" != "success" ]; then FAILED="$FAILED scenario5"; fi
           if [ -n "$FAILED" ]; then
             echo "::error::Failed scenarios:$FAILED"
             exit 1

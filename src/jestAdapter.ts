@@ -62,7 +62,6 @@ export class JestAdapter implements Adapter {
   // Cached from setup() — typed as `any` since these are Jest internals
   private contexts: any[] | null = null
   private baseGlobalConfig: Record<string, any> | null = null
-  private originalProcessExit: typeof process.exit | null = null
 
   // Cached dynamic imports
   private runJestFn: ((args: any) => Promise<void>) | null = null
@@ -87,12 +86,6 @@ export class JestAdapter implements Adapter {
 
   async setup(): Promise<void> {
     this.log('[specbandit:jest] Initializing Jest adapter...')
-
-    // Intercept process.exit to prevent Jest from killing our process
-    this.originalProcessExit = process.exit
-    process.exit = ((code?: number) => {
-      this.log(`[specbandit:jest] Intercepted process.exit(${code}), continuing...`)
-    }) as typeof process.exit
 
     try {
       // Require Jest packages from the project root's node_modules.
@@ -153,12 +146,6 @@ export class JestAdapter implements Adapter {
         `[specbandit:jest] Setup complete in ${duration}s (${this.contexts.length} project(s), haste map built)`,
       )
     } catch (error: unknown) {
-      // Restore process.exit if setup fails
-      if (this.originalProcessExit) {
-        process.exit = this.originalProcessExit
-        this.originalProcessExit = null
-      }
-
       const message = error instanceof Error ? error.message : String(error)
       throw new Error(
         `[specbandit:jest] Failed to initialize Jest adapter: ${message}\n` +
@@ -168,8 +155,19 @@ export class JestAdapter implements Adapter {
   }
 
   async runBatch(files: string[], batchNum: number): Promise<BatchResult> {
-    if (!this.contexts || !this.baseGlobalConfig || !this.runJestFn || !this.TestWatcherClass) {
-      throw new Error('[specbandit:jest] Adapter not initialized. Call setup() first.')
+    // Capture all references locally at the start of the batch.
+    // This protects against teardown() nullifying instance fields if it
+    // runs concurrently (e.g. due to the `exit` npm package used by Jest
+    // internals triggering early promise resolution in the worker).
+    const contexts = this.contexts
+    const baseGlobalConfig = this.baseGlobalConfig
+    const runJest = this.runJestFn
+    const TestWatcher = this.TestWatcherClass
+
+    if (!contexts || !baseGlobalConfig || !runJest || !TestWatcher) {
+      throw new Error(
+        `[specbandit:jest] Adapter not initialized. Call setup() first.`,
+      )
     }
 
     // Build a testPathPattern that matches exactly these files
@@ -177,7 +175,7 @@ export class JestAdapter implements Adapter {
 
     // Create a modified globalConfig for this batch
     const batchGlobalConfig = {
-      ...this.baseGlobalConfig,
+      ...baseGlobalConfig,
       testPathPattern,
       passWithNoTests: true,
     }
@@ -185,10 +183,26 @@ export class JestAdapter implements Adapter {
     const startTime = performance.now()
     let exitCode = 0
 
-    try {
-      const runJest = this.runJestFn
-      const TestWatcher = this.TestWatcherClass
+    // Intercept process.exit for this batch only.
+    // Jest's `exit` npm package (used in runJest.js) replaces stdout/stderr
+    // write functions with no-ops and then calls process.exit(). We must:
+    //   1. Prevent the exit from killing our process
+    //   2. Restore stdout/stderr write functions that `exit` clobbered
+    const origExit = process.exit
+    const origStdoutWrite = process.stdout.write
+    const origStderrWrite = process.stderr.write
+    let exitIntercepted = false
 
+    process.exit = ((code?: number) => {
+      exitIntercepted = true
+      // The `exit` npm package replaces stdout/stderr.write with no-ops
+      // before calling process.exit. Restore them immediately.
+      process.stdout.write = origStdoutWrite
+      process.stderr.write = origStderrWrite
+      this.log(`[specbandit:jest] Intercepted process.exit(${code}) in batch #${batchNum}`)
+    }) as typeof process.exit
+
+    try {
       interface RunJestResult {
         success: boolean
         testResults: Array<{
@@ -200,13 +214,27 @@ export class JestAdapter implements Adapter {
       }
 
       const result = await new Promise<RunJestResult>((resolve, reject) => {
+        // Safety timeout: if onComplete is never called (e.g. because
+        // the `exit` package killed stdout before Jest could report),
+        // resolve with a failure after 5 minutes.
+        const timeout = setTimeout(() => {
+          resolve({ success: false, testResults: [] })
+          this.log(`[specbandit:jest] Batch #${batchNum} timed out waiting for onComplete`)
+        }, 300_000)
+
         runJest({
-          contexts: this.contexts!,
+          contexts,
           globalConfig: batchGlobalConfig,
           outputStream: this.verbose ? process.stderr : new NullWritable(),
           testWatcher: new TestWatcher({ isWatchMode: false }),
-          onComplete: (results: RunJestResult) => resolve(results),
-        }).catch(reject)
+          onComplete: (results: RunJestResult) => {
+            clearTimeout(timeout)
+            resolve(results)
+          },
+        }).catch((err: unknown) => {
+          clearTimeout(timeout)
+          reject(err)
+        })
       })
 
       if (!result.success) {
@@ -223,6 +251,17 @@ export class JestAdapter implements Adapter {
       exitCode = 1
       const message = error instanceof Error ? error.message : String(error)
       this.log(`[specbandit:jest] Batch #${batchNum} error: ${message}`)
+    } finally {
+      // Always restore process.exit and stdio after each batch
+      process.exit = origExit
+      // Restore stdout/stderr in case `exit` package clobbered them
+      // and our interceptor didn't fire (edge case)
+      process.stdout.write = origStdoutWrite
+      process.stderr.write = origStderrWrite
+    }
+
+    if (exitIntercepted) {
+      exitCode = 1
     }
 
     // Clear the resolver cache between batches
@@ -242,12 +281,6 @@ export class JestAdapter implements Adapter {
   }
 
   async teardown(): Promise<void> {
-    // Restore process.exit
-    if (this.originalProcessExit) {
-      process.exit = this.originalProcessExit
-      this.originalProcessExit = null
-    }
-
     this.contexts = null
     this.baseGlobalConfig = null
     this.runJestFn = null

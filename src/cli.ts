@@ -128,10 +128,10 @@ function buildAdapter(flags: Record<string, string>, config: Configuration): Ada
 }
 
 async function runWork(argv: string[]): Promise<number> {
-  const { flags } = parseArgs(argv)
+  const { flags, positional } = parseArgs(argv)
 
   if (flags.help) {
-    console.log(`Usage: specbandit work [options]
+    console.log(`Usage: specbandit work [options] [-- extra-opts...]
 
 Options:
   --key KEY              Redis queue key (required, or set SPECBANDIT_KEY)
@@ -148,6 +148,8 @@ Options:
   --json-out PATH        Write merged JSON results to file
   -h, --help             Show this help
 
+Arguments after -- are forwarded to the adapter (jest opts, command opts, etc.).
+
 Adapters:
   cli   (default) Spawns a shell command for each batch. Works with any test runner.
         Requires --command.
@@ -158,11 +160,16 @@ Adapters:
 
   const adapterType = (flags.adapter ?? process.env.SPECBANDIT_ADAPTER ?? 'cli').toLowerCase()
 
+  // Merge --command-opts and positional args after `--` into a single list.
+  // This supports both `--command-opts "--silent --json"` and `-- --silent --json`.
+  const explicitOpts = flags['command-opts'] ? flags['command-opts'].split(/\s+/) : []
+  const mergedOpts = [...explicitOpts, ...positional]
+
   // For the jest adapter, command is not required
   const config = new Configuration({
     key: flags.key,
     command: flags.command,
-    commandOpts: flags['command-opts'] ? flags['command-opts'].split(/\s+/) : undefined,
+    commandOpts: mergedOpts.length > 0 ? mergedOpts : undefined,
     batchSize: flags['batch-size'] ? parseInt(flags['batch-size'], 10) : undefined,
     redisUrl: flags['redis-url'],
     keyRerun: flags['key-rerun'],
@@ -202,8 +209,8 @@ function printUsage(): void {
   console.log(`specbandit v${VERSION} - Distributed test runner using Redis
 
 Usage:
-  specbandit push [options] [files...]    Enqueue test files into Redis
-  specbandit work [options]               Steal and run test file batches
+  specbandit push [options] [files...]           Enqueue test files into Redis
+  specbandit work [options] [-- extra-opts...]   Steal and run test file batches
 
 Push options:
   --key KEY              Redis queue key (required, or set SPECBANDIT_KEY)
@@ -224,6 +231,9 @@ Work options:
   --key-rerun-ttl N      TTL for rerun key (default: 604800 / 1 week)
   --verbose              Show per-batch file list and full command output
   --json-out PATH        Write merged JSON results to file
+
+  Arguments after -- are forwarded to the adapter (jest opts, command opts, etc.).
+  They are merged with --command-opts if both are provided.
 
 Environment variables:
   SPECBANDIT_KEY              Queue key
