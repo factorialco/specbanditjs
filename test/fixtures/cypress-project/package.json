@@ -1,0 +1,7 @@
+{
+  "name": "specbandit-cypress-e2e-fixture",
+  "private": true,
+  "dependencies": {
+    "cypress": "^13.0.0"
+  }
+}

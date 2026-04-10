@@ -4,6 +4,7 @@ import { RedisQueue } from './redisQueue.js'
 import { Worker } from './worker.js'
 import { CliAdapter } from './cliAdapter.js'
 import { JestAdapter } from './jestAdapter.js'
+import { CypressAdapter } from './cypressAdapter.js'
 import type { Adapter } from './adapter.js'
 
 function parseArgs(argv: string[]): { flags: Record<string, string>; positional: string[] } {
@@ -96,9 +97,10 @@ Options:
 /**
  * Build the appropriate adapter based on CLI flags.
  *
- * --adapter jest   → JestAdapter (runs Jest programmatically, haste map reuse)
- * --adapter cli    → CliAdapter (default, spawns shell commands)
- * (no --adapter)   → CliAdapter (backward compatible)
+ * --adapter jest    → JestAdapter (runs Jest programmatically, haste map reuse)
+ * --adapter cypress → CypressAdapter (runs Cypress programmatically via Module API)
+ * --adapter cli     → CliAdapter (default, spawns shell commands)
+ * (no --adapter)    → CliAdapter (backward compatible)
  */
 function buildAdapter(flags: Record<string, string>, config: Configuration): Adapter {
   const adapterType = (flags.adapter ?? process.env.SPECBANDIT_ADAPTER ?? 'cli').toLowerCase()
@@ -109,6 +111,15 @@ function buildAdapter(flags: Record<string, string>, config: Configuration): Ada
         jestConfig: flags['jest-config'] ?? process.env.SPECBANDIT_JEST_CONFIG,
         projectRoot: flags['project-root'] ?? process.env.SPECBANDIT_PROJECT_ROOT,
         jestOpts: config.commandOpts, // Reuse commandOpts as jestOpts
+        verbose: config.verbose,
+      })
+
+    case 'cypress':
+      return new CypressAdapter({
+        configFile: flags['cypress-config'] ?? process.env.SPECBANDIT_CYPRESS_CONFIG,
+        projectRoot: flags['project-root'] ?? process.env.SPECBANDIT_PROJECT_ROOT,
+        browser: flags['cypress-browser'] ?? process.env.SPECBANDIT_CYPRESS_BROWSER,
+        testingType: (flags['cypress-testing-type'] ?? process.env.SPECBANDIT_CYPRESS_TESTING_TYPE ?? 'e2e') as 'e2e' | 'component',
         verbose: config.verbose,
       })
 
@@ -123,7 +134,7 @@ function buildAdapter(flags: Record<string, string>, config: Configuration): Ada
       })
 
     default:
-      throw new SpecbanditError(`Unknown adapter: ${adapterType}. Supported: cli, jest`)
+      throw new SpecbanditError(`Unknown adapter: ${adapterType}. Supported: cli, jest, cypress`)
   }
 }
 
@@ -135,11 +146,14 @@ async function runWork(argv: string[]): Promise<number> {
 
 Options:
   --key KEY              Redis queue key (required, or set SPECBANDIT_KEY)
-  --adapter TYPE         Adapter type: 'cli' (default) or 'jest'
+  --adapter TYPE         Adapter type: 'cli' (default), 'jest', or 'cypress'
   --command CMD          Command to run with file paths (required for cli adapter)
   --command-opts OPTS    Extra options forwarded to the command/jest (space-separated)
   --jest-config PATH     Path to jest config file (for jest adapter)
-  --project-root PATH    Project root directory (for jest adapter, default: cwd)
+  --cypress-config PATH  Path to cypress config file (for cypress adapter)
+  --cypress-browser B    Browser to use (for cypress adapter, e.g. chrome, firefox)
+  --cypress-testing-type Testing type: 'e2e' (default) or 'component' (for cypress adapter)
+  --project-root PATH    Project root directory (for jest/cypress adapters, default: cwd)
   --batch-size N         Files per batch (default: 5)
   --redis-url URL        Redis URL (default: redis://localhost:6379)
   --key-rerun KEY        Per-runner rerun key for re-run support
@@ -149,10 +163,12 @@ Options:
   -h, --help             Show this help
 
 Adapters:
-  cli   (default) Spawns a shell command for each batch. Works with any test runner.
-        Requires --command.
-  jest  Runs Jest programmatically with haste map reuse. No process startup overhead.
-        Requires jest@^29.0.0 installed as a dependency.`)
+  cli     (default) Spawns a shell command for each batch. Works with any test runner.
+          Requires --command.
+  jest    Runs Jest programmatically with haste map reuse. No process startup overhead.
+          Requires jest@^29.0.0 installed as a dependency.
+  cypress Runs Cypress programmatically via Module API. Each batch launches a fresh browser.
+          Requires cypress@^13.0.0 installed as a dependency.`)
     return 0
   }
 
@@ -173,8 +189,10 @@ Adapters:
   // Only validate command requirement for CLI adapter
   if (adapterType === 'cli') {
     config.validateForWork()
-  } else {
+  } else if (adapterType === 'jest' || adapterType === 'cypress') {
     config.validate()
+  } else {
+    config.validateForWork()
   }
 
   const adapter = buildAdapter(flags, config)
@@ -213,11 +231,14 @@ Push options:
 
 Work options:
   --key KEY              Redis queue key (required, or set SPECBANDIT_KEY)
-  --adapter TYPE         Adapter type: 'cli' (default) or 'jest'
+  --adapter TYPE         Adapter type: 'cli' (default), 'jest', or 'cypress'
   --command CMD          Command to run with file paths (required for cli adapter)
   --command-opts OPTS    Extra options forwarded to the command/jest (space-separated)
   --jest-config PATH     Path to jest config file (for jest adapter)
-  --project-root PATH    Project root directory (for jest adapter, default: cwd)
+  --cypress-config PATH  Path to cypress config file (for cypress adapter)
+  --cypress-browser B    Browser to use (for cypress adapter, e.g. chrome, firefox)
+  --cypress-testing-type Testing type: 'e2e' (default) or 'component' (for cypress adapter)
+  --project-root PATH    Project root directory (for jest/cypress adapters, default: cwd)
   --batch-size N         Files per batch (default: 5, or set SPECBANDIT_BATCH_SIZE)
   --redis-url URL        Redis URL (default: redis://localhost:6379)
   --key-rerun KEY        Per-runner rerun key for re-run support
@@ -228,11 +249,14 @@ Work options:
 Environment variables:
   SPECBANDIT_KEY              Queue key
   SPECBANDIT_REDIS_URL        Redis URL
-  SPECBANDIT_ADAPTER          Adapter type (cli/jest)
+  SPECBANDIT_ADAPTER          Adapter type (cli/jest/cypress)
   SPECBANDIT_COMMAND          Command to run (cli adapter)
   SPECBANDIT_COMMAND_OPTS     Command/jest options (space-separated)
   SPECBANDIT_JEST_CONFIG      Jest config path (jest adapter)
-  SPECBANDIT_PROJECT_ROOT     Project root (jest adapter)
+  SPECBANDIT_CYPRESS_CONFIG   Cypress config path (cypress adapter)
+  SPECBANDIT_CYPRESS_BROWSER  Browser name (cypress adapter)
+  SPECBANDIT_CYPRESS_TESTING_TYPE  Testing type: e2e or component (cypress adapter)
+  SPECBANDIT_PROJECT_ROOT     Project root (jest/cypress adapters)
   SPECBANDIT_BATCH_SIZE       Batch size
   SPECBANDIT_KEY_TTL          Key TTL in seconds (default: 21600)
   SPECBANDIT_KEY_RERUN        Per-runner rerun key
@@ -245,9 +269,11 @@ File input priority for push:
   3. direct args       specbandit push --key KEY test/a.test.ts test/b.test.ts
 
 Adapters:
-  cli   (default) Spawns a shell command for each batch. Works with any test runner.
-  jest  Runs Jest programmatically with haste map reuse. No process startup overhead.
-        Requires jest@^29.0.0 installed as a project dependency.`)
+  cli     (default) Spawns a shell command for each batch. Works with any test runner.
+  jest    Runs Jest programmatically with haste map reuse. No process startup overhead.
+          Requires jest@^29.0.0 installed as a project dependency.
+  cypress Runs Cypress programmatically via Module API. Each batch launches a fresh browser.
+          Requires cypress@^13.0.0 installed as a project dependency.`)
 }
 
 export class CLI {
