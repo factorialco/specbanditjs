@@ -52,10 +52,6 @@ describe('JestAdapter', () => {
       await expect(adapter.setup()).rejects.toThrow(
         /Failed to initialize Jest adapter/,
       )
-
-      // Verify process.exit is restored on failure
-      expect(process.exit).toBeDefined()
-      expect(typeof process.exit).toBe('function')
     })
   })
 
@@ -73,6 +69,14 @@ describe('JestAdapter', () => {
     it('can be called even without setup', async () => {
       const adapter = new JestAdapter({ output: capture.stream })
       await expect(adapter.teardown()).resolves.toBeUndefined()
+    })
+
+    it('does not touch process.exit', async () => {
+      const adapter = new JestAdapter({ output: capture.stream })
+      const originalExit = process.exit
+      await adapter.teardown()
+      // process.exit should be untouched — teardown no longer manages it
+      expect(process.exit).toBe(originalExit)
     })
   })
 })
