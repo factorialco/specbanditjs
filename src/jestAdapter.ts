@@ -70,8 +70,9 @@ export class JestAdapter implements Adapter {
   // Require function rooted at projectRoot for resolving Jest packages
   private projectRequire: NodeRequire
 
-  // Diagnostic: unique ID per instance to detect multi-instance issues
-  private _instanceId = Math.random().toString(36).slice(2, 8)
+  // Require function rooted at @jest/core's location for resolving
+  // sibling Jest packages (jest-resolve, etc.) with version consistency
+  private coreRequire: NodeRequire | null = null
 
   constructor(options: JestAdapterOptions = {}) {
     this.projectRoot = options.projectRoot ?? process.cwd()
@@ -91,38 +92,55 @@ export class JestAdapter implements Adapter {
     this.log('[specbandit:jest] Initializing Jest adapter...')
 
     try {
-      // Require Jest packages from the project root's node_modules.
-      // Using createRequire ensures resolution happens from projectRoot,
-      // not from specbandit's installation directory.
+      // Resolve Jest packages through the dependency chain.
       //
-      // For internal files of Jest packages, we resolve the package's main
-      // entry to find its directory, then require internal files by absolute
-      // path. This bypasses the "exports" field in package.json which blocks
-      // deep imports (affects @jest/core and jest-watcher).
-      const jestConfigMod = this.projectRequire('jest-config')
-      const runtimeMod = this.projectRequire('jest-runtime')
-      const watcherMod = this.projectRequire('jest-watcher')
+      // In pnpm's strict isolation mode, only direct dependencies are
+      // resolvable from the project root. `jest` is a direct dependency,
+      // but `@jest/core`, `jest-config`, `jest-runtime`, and `jest-watcher`
+      // are transitive — they live in pnpm's virtual store and can only
+      // be resolved through the package that depends on them.
+      //
+      // Resolution chain:
+      //   projectRoot -> jest -> @jest/core -> {jest-config, jest-runtime, jest-watcher}
+      //
+      // This also prevents version mismatches: resolving from @jest/core
+      // guarantees all sibling packages are the same major version.
 
-      // Resolve @jest/core internals via absolute path
-      const coreMainPath = this.projectRequire.resolve('@jest/core')
+      // Step 1: Resolve `jest` from the project root (direct dependency).
+      const jestMainPath = this.projectRequire.resolve('jest')
+      const jestPkgDir = path.dirname(path.dirname(jestMainPath))
+      const jestRequire = createRequire(path.join(jestPkgDir, 'index.js'))
+
+      // Step 2: Resolve `@jest/core` from `jest`'s location.
+      const coreMainPath = jestRequire.resolve('@jest/core')
       const corePkgDir = path.dirname(path.dirname(coreMainPath))
-      const createContextMod = this.projectRequire(path.join(corePkgDir, 'build', 'lib', 'createContext.js'))
-      const runJestMod = this.projectRequire(path.join(corePkgDir, 'build', 'runJest.js'))
+      const coreRequire = createRequire(path.join(corePkgDir, 'index.js'))
+      this.coreRequire = coreRequire
+
+      // Step 3: Resolve sibling packages from @jest/core's location.
+      const jestConfigMod = coreRequire('jest-config')
+      const runtimeMod = coreRequire('jest-runtime')
+
+      // Internal @jest/core files — require by absolute path to bypass
+      // the "exports" field which blocks deep imports.
+      // Note: must use createRequire-based require (not bare `require`)
+      // because this module is ESM where `require` is not available.
+      const createContextMod = coreRequire(path.join(corePkgDir, 'build', 'lib', 'createContext.js'))
+      const runJestMod = coreRequire(path.join(corePkgDir, 'build', 'runJest.js'))
 
       const readConfigs = jestConfigMod.readConfigs
       const Runtime = runtimeMod.default ?? runtimeMod
       const createContext = createContextMod.default ?? createContextMod.createContext
       this.runJestFn = runJestMod.default
 
-      // jest-watcher exports TestWatcher differently depending on the module
-      // resolution context (CJS named export, CJS default, or ESM interop).
-      // Try the named export first, then fall back to resolving the internal
-      // file by absolute path (same approach as @jest/core above).
+      // Resolve TestWatcher from @jest/core's jest-watcher (guaranteed v29).
+      const watcherMod = coreRequire('jest-watcher')
       this.TestWatcherClass = watcherMod.TestWatcher ?? watcherMod.default?.TestWatcher ?? watcherMod.default
       if (!this.TestWatcherClass) {
-        const watcherMainPath = this.projectRequire.resolve('jest-watcher')
+        // Absolute path fallback — bypasses the "exports" field
+        const watcherMainPath = coreRequire.resolve('jest-watcher')
         const watcherPkgDir = path.dirname(path.dirname(watcherMainPath))
-        const testWatcherMod = this.projectRequire(path.join(watcherPkgDir, 'build', 'TestWatcher.js'))
+        const testWatcherMod = coreRequire(path.join(watcherPkgDir, 'build', 'TestWatcher.js'))
         this.TestWatcherClass = testWatcherMod.default ?? testWatcherMod.TestWatcher ?? testWatcherMod
       }
 
@@ -160,11 +178,10 @@ export class JestAdapter implements Adapter {
         `[specbandit:jest] Setup complete in ${duration}s (${this.contexts.length} project(s), haste map built)`,
       )
       this.log(
-        `[specbandit:jest] Post-setup state check: contexts=${this.contexts ? 'set' : 'null'}, ` +
+        `[specbandit:jest] Post-setup state: contexts=${this.contexts ? 'set' : 'null'}, ` +
         `globalConfig=${this.baseGlobalConfig ? 'set' : 'null'}, ` +
         `runJestFn=${typeof this.runJestFn}, ` +
-        `TestWatcher=${typeof this.TestWatcherClass}, ` +
-        `instanceId=${this._instanceId}`,
+        `TestWatcher=${typeof this.TestWatcherClass}`,
       )
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error)
@@ -186,13 +203,6 @@ export class JestAdapter implements Adapter {
     const TestWatcher = this.TestWatcherClass
 
     if (!contexts || !baseGlobalConfig || !runJest || !TestWatcher) {
-      this.log(
-        `[specbandit:jest] DIAGNOSTIC runBatch entry: instanceId=${this._instanceId}, ` +
-        `contexts=${typeof contexts}, ` +
-        `globalConfig=${typeof baseGlobalConfig}, ` +
-        `runJestFn=${typeof runJest}, ` +
-        `TestWatcher=${typeof TestWatcher}`,
-      )
       throw new Error(
         `[specbandit:jest] Adapter not initialized. Call setup() first.`,
       )
@@ -220,6 +230,13 @@ export class JestAdapter implements Adapter {
     const origStdoutWrite = process.stdout.write
     const origStderrWrite = process.stderr.write
     let exitIntercepted = false
+
+    // When not verbose, suppress Jest's reporter output (PASS/FAIL lines,
+    // summary, etc.) by replacing stdout.write with a no-op. The specbandit
+    // worker already prints batch progress and summary information.
+    if (!this.verbose) {
+      process.stdout.write = (() => true) as typeof process.stdout.write
+    }
 
     process.exit = ((code?: number) => {
       exitIntercepted = true
@@ -294,10 +311,12 @@ export class JestAdapter implements Adapter {
 
     // Clear the resolver cache between batches
     try {
-      const resolverMod = this.projectRequire('jest-resolve')
-      const Resolver = resolverMod.default ?? resolverMod
-      if (typeof Resolver.clearDefaultResolverCache === 'function') {
-        Resolver.clearDefaultResolverCache()
+      if (this.coreRequire) {
+        const resolverMod = this.coreRequire('jest-resolve')
+        const Resolver = resolverMod.default ?? resolverMod
+        if (typeof Resolver.clearDefaultResolverCache === 'function') {
+          Resolver.clearDefaultResolverCache()
+        }
       }
     } catch {
       // Resolver cache clearing is optional
@@ -309,13 +328,12 @@ export class JestAdapter implements Adapter {
   }
 
   async teardown(): Promise<void> {
-    this.log(`[specbandit:jest] Teardown called on instanceId=${this._instanceId}, contexts=${this.contexts ? 'set' : 'null'}`)
-    this.log(`[specbandit:jest] Teardown stack: ${new Error().stack?.split('\n').slice(1, 5).join(' <- ')}`)
+    this.log('[specbandit:jest] Tearing down Jest adapter...')
     this.contexts = null
     this.baseGlobalConfig = null
     this.runJestFn = null
     this.TestWatcherClass = null
-
+    this.coreRequire = null
     this.log('[specbandit:jest] Teardown complete.')
   }
 
