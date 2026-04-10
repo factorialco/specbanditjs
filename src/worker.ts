@@ -76,6 +76,7 @@ export class Worker {
    */
   async run(): Promise<number> {
     await this.adapter.setup()
+    this.log('[specbandit] Worker.run(): setup complete, entering try block')
 
     let exitCode: number
 
@@ -97,6 +98,7 @@ export class Worker {
       this.writeJsonResults()
       this.writeGitHubStepSummary()
     } finally {
+      this.log('[specbandit] Worker.run(): entering finally block (calling teardown)')
       await this.adapter.teardown()
     }
 
