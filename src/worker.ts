@@ -1,10 +1,26 @@
-import { spawnSync } from 'node:child_process'
-import { performance } from 'node:perf_hooks'
 import fs from 'node:fs'
 import { RedisQueue } from './redisQueue.js'
 import { VERSION } from './configuration.js'
+import type { Adapter, BatchResult } from './adapter.js'
+import { CliAdapter } from './cliAdapter.js'
 
 export interface WorkerOptions {
+  key: string
+  adapter: Adapter
+  batchSize?: number
+  keyRerun?: string | null
+  keyRerunTtl?: number
+  verbose?: boolean
+  queue?: RedisQueue
+  output?: NodeJS.WritableStream
+  jsonOut?: string | null
+}
+
+/**
+ * Legacy options for backward compatibility.
+ * When `command` is provided instead of `adapter`, a CliAdapter is created automatically.
+ */
+export interface WorkerOptionsLegacy {
   key: string
   command: string
   commandOpts?: string[]
@@ -17,18 +33,10 @@ export interface WorkerOptions {
   jsonOut?: string | null
 }
 
-interface BatchResult {
-  batchNum: number
-  files: string[]
-  exitCode: number
-  duration: number
-}
-
 export class Worker {
   readonly queue: RedisQueue
   readonly key: string
-  readonly command: string
-  readonly commandOpts: string[]
+  readonly adapter: Adapter
   readonly batchSize: number
   readonly keyRerun: string | null
   readonly keyRerunTtl: number
@@ -38,10 +46,8 @@ export class Worker {
 
   private batchResults: BatchResult[] = []
 
-  constructor(options: WorkerOptions) {
+  constructor(options: WorkerOptions | WorkerOptionsLegacy) {
     this.key = options.key
-    this.command = options.command
-    this.commandOpts = options.commandOpts ?? []
     this.batchSize = options.batchSize ?? 5
     this.keyRerun = options.keyRerun ?? null
     this.keyRerunTtl = options.keyRerunTtl ?? 604_800
@@ -49,6 +55,18 @@ export class Worker {
     this.queue = options.queue ?? new RedisQueue()
     this.output = options.output ?? process.stdout
     this.jsonOut = options.jsonOut ?? null
+
+    // Support both new adapter-based and legacy command-based options
+    if ('adapter' in options) {
+      this.adapter = options.adapter
+    } else {
+      this.adapter = new CliAdapter({
+        command: options.command,
+        commandOpts: options.commandOpts,
+        verbose: this.verbose,
+        output: this.output,
+      })
+    }
   }
 
   /**
@@ -57,24 +75,30 @@ export class Worker {
    * Returns 0 if all batches passed (or nothing to do), 1 if any batch failed.
    */
   async run(): Promise<number> {
+    await this.adapter.setup()
+
     let exitCode: number
 
-    if (this.keyRerun) {
-      const rerunFiles = await this.queue.readAll(this.keyRerun)
-      if (rerunFiles.length > 0) {
-        exitCode = await this.runReplay(rerunFiles)
+    try {
+      if (this.keyRerun) {
+        const rerunFiles = await this.queue.readAll(this.keyRerun)
+        if (rerunFiles.length > 0) {
+          exitCode = await this.runReplay(rerunFiles)
+        } else {
+          exitCode = await this.runSteal(true)
+        }
       } else {
-        exitCode = await this.runSteal(true)
+        exitCode = await this.runSteal(false)
       }
-    } else {
-      exitCode = await this.runSteal(false)
-    }
 
-    if (this.batchResults.length > 0) {
-      this.printSummary()
+      if (this.batchResults.length > 0) {
+        this.printSummary()
+      }
+      this.writeJsonResults()
+      this.writeGitHubStepSummary()
+    } finally {
+      await this.adapter.teardown()
     }
-    this.writeJsonResults()
-    this.writeGitHubStepSummary()
 
     return exitCode
   }
@@ -99,7 +123,7 @@ export class Worker {
         for (const f of batch) this.log(`  ${f}`)
       }
 
-      const result = this.runCommandBatch(batch, batchNum)
+      const result = await this.adapter.runBatch(batch, batchNum)
       this.batchResults.push(result)
 
       if (result.exitCode !== 0) {
@@ -151,7 +175,7 @@ export class Worker {
         for (const f of files) this.log(`  ${f}`)
       }
 
-      const result = this.runCommandBatch(files, batchNum)
+      const result = await this.adapter.runBatch(files, batchNum)
       this.batchResults.push(result)
 
       if (result.exitCode !== 0) {
@@ -171,38 +195,6 @@ export class Worker {
     }
 
     return failed ? 1 : 0
-  }
-
-  /**
-   * Run a single batch of files using the configured command.
-   *
-   * Spawns: <command> [...commandOpts] [...files]
-   */
-  private runCommandBatch(files: string[], batchNum: number): BatchResult {
-    // Parse command into parts to handle "npx jest" style commands
-    const commandParts = this.command.split(/\s+/)
-    const executable = commandParts[0]
-    const args = [...commandParts.slice(1), ...this.commandOpts, ...files]
-
-    const startTime = performance.now()
-    const result = spawnSync(executable, args, {
-      stdio: this.verbose ? 'inherit' : 'pipe',
-      shell: false,
-      env: process.env,
-    })
-    const duration = (performance.now() - startTime) / 1000 // seconds
-
-    const exitCode = result.status ?? 1
-
-    // If not verbose but command produced stderr on failure, print it
-    if (!this.verbose && exitCode !== 0 && result.stderr) {
-      const stderr = result.stderr.toString()
-      if (stderr.trim()) {
-        this.log(stderr)
-      }
-    }
-
-    return { batchNum, files, exitCode, duration }
   }
 
   // --- Reporting helpers ---
@@ -249,7 +241,6 @@ export class Worker {
 
     const merged = {
       specbandit_version: VERSION,
-      command: this.command,
       summary: {
         total_files: totalFiles,
         total_batches: this.batchResults.length,
@@ -291,7 +282,6 @@ export class Worker {
       lines.push('')
       lines.push('| Metric | Value |')
       lines.push('|--------|-------|')
-      lines.push(`| Command | \`${this.command}\` |`)
       lines.push(`| Batches | ${this.batchResults.length} |`)
       lines.push(`| Files | ${totalFiles} |`)
       lines.push(`| Failed batches | ${failedBatches.length} |`)

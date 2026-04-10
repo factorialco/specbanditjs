@@ -1,0 +1,7 @@
+{
+  "name": "specbandit-jest-e2e-fixture",
+  "private": true,
+  "dependencies": {
+    "jest": "^29.7.0"
+  }
+}
