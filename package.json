@@ -28,10 +28,14 @@
     "ioredis": "^5.4.1"
   },
   "peerDependencies": {
-    "jest": "^29.0.0"
+    "jest": "^29.0.0",
+    "cypress": "^13.0.0"
   },
   "peerDependenciesMeta": {
     "jest": {
+      "optional": true
+    },
+    "cypress": {
       "optional": true
     }
   },
@@ -54,6 +58,7 @@
     "ci",
     "parallel",
     "jest",
+    "cypress",
     "vitest",
     "work-stealing"
   ]
