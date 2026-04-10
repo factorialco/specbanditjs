@@ -113,7 +113,16 @@ export class JestAdapter implements Adapter {
       const Runtime = runtimeMod.default ?? runtimeMod
       const createContext = createContextMod.default ?? createContextMod.createContext
       this.runJestFn = runJestMod.default
-      this.TestWatcherClass = watcherMod.TestWatcher
+
+      // jest-watcher exports TestWatcher differently depending on the module
+      // resolution context (CJS named export, CJS default, or ESM interop).
+      // Try all possible shapes to handle pnpm hoisting and bundler interop.
+      this.TestWatcherClass = watcherMod.TestWatcher ?? watcherMod.default?.TestWatcher ?? watcherMod.default
+      if (!this.TestWatcherClass) {
+        // Last resort: require TestWatcher.js directly
+        const testWatcherMod = this.projectRequire('jest-watcher/build/TestWatcher')
+        this.TestWatcherClass = testWatcherMod.default ?? testWatcherMod.TestWatcher ?? testWatcherMod
+      }
 
       // Build argv for Jest config reading
       const argv = this.buildArgv()
@@ -151,9 +160,8 @@ export class JestAdapter implements Adapter {
       this.log(
         `[specbandit:jest] Post-setup state check: contexts=${this.contexts ? 'set' : 'null'}, ` +
         `globalConfig=${this.baseGlobalConfig ? 'set' : 'null'}, ` +
-        `runJestFn=${this.runJestFn ? 'set' : 'null'}, ` +
-        `TestWatcher=${this.TestWatcherClass ? 'set' : 'null'}, ` +
-        `this.constructor.name=${this.constructor.name}, ` +
+        `runJestFn=${typeof this.runJestFn}, ` +
+        `TestWatcher=${typeof this.TestWatcherClass}, ` +
         `instanceId=${this._instanceId}`,
       )
     } catch (error: unknown) {
@@ -178,10 +186,10 @@ export class JestAdapter implements Adapter {
     if (!contexts || !baseGlobalConfig || !runJest || !TestWatcher) {
       this.log(
         `[specbandit:jest] DIAGNOSTIC runBatch entry: instanceId=${this._instanceId}, ` +
-        `contexts=${this.contexts === null ? 'null' : 'set'}, ` +
-        `globalConfig=${this.baseGlobalConfig === null ? 'null' : 'set'}, ` +
-        `runJestFn=${this.runJestFn === null ? 'null' : 'set'}, ` +
-        `TestWatcher=${this.TestWatcherClass === null ? 'null' : 'set'}`,
+        `contexts=${typeof contexts}, ` +
+        `globalConfig=${typeof baseGlobalConfig}, ` +
+        `runJestFn=${typeof runJest}, ` +
+        `TestWatcher=${typeof TestWatcher}`,
       )
       throw new Error(
         `[specbandit:jest] Adapter not initialized. Call setup() first.`,
