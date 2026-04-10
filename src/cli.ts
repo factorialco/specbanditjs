@@ -2,6 +2,9 @@ import { Configuration, SpecbanditError, VERSION } from './configuration.js'
 import { Publisher } from './publisher.js'
 import { RedisQueue } from './redisQueue.js'
 import { Worker } from './worker.js'
+import { CliAdapter } from './cliAdapter.js'
+import { JestAdapter } from './jestAdapter.js'
+import type { Adapter } from './adapter.js'
 
 function parseArgs(argv: string[]): { flags: Record<string, string>; positional: string[] } {
   const flags: Record<string, string> = {}
@@ -90,6 +93,40 @@ Options:
   }
 }
 
+/**
+ * Build the appropriate adapter based on CLI flags.
+ *
+ * --adapter jest   → JestAdapter (runs Jest programmatically, haste map reuse)
+ * --adapter cli    → CliAdapter (default, spawns shell commands)
+ * (no --adapter)   → CliAdapter (backward compatible)
+ */
+function buildAdapter(flags: Record<string, string>, config: Configuration): Adapter {
+  const adapterType = (flags.adapter ?? process.env.SPECBANDIT_ADAPTER ?? 'cli').toLowerCase()
+
+  switch (adapterType) {
+    case 'jest':
+      return new JestAdapter({
+        jestConfig: flags['jest-config'] ?? process.env.SPECBANDIT_JEST_CONFIG,
+        projectRoot: flags['project-root'] ?? process.env.SPECBANDIT_PROJECT_ROOT,
+        jestOpts: config.commandOpts, // Reuse commandOpts as jestOpts
+        verbose: config.verbose,
+      })
+
+    case 'cli':
+      if (!config.command) {
+        throw new SpecbanditError('command is required for CLI adapter (set via --command or SPECBANDIT_COMMAND)')
+      }
+      return new CliAdapter({
+        command: config.command,
+        commandOpts: config.commandOpts,
+        verbose: config.verbose,
+      })
+
+    default:
+      throw new SpecbanditError(`Unknown adapter: ${adapterType}. Supported: cli, jest`)
+  }
+}
+
 async function runWork(argv: string[]): Promise<number> {
   const { flags } = parseArgs(argv)
 
@@ -98,18 +135,30 @@ async function runWork(argv: string[]): Promise<number> {
 
 Options:
   --key KEY              Redis queue key (required, or set SPECBANDIT_KEY)
-  --command CMD          Command to run with file paths (required, or set SPECBANDIT_COMMAND)
-  --command-opts OPTS    Extra options forwarded to the command (space-separated)
+  --adapter TYPE         Adapter type: 'cli' (default) or 'jest'
+  --command CMD          Command to run with file paths (required for cli adapter)
+  --command-opts OPTS    Extra options forwarded to the command/jest (space-separated)
+  --jest-config PATH     Path to jest config file (for jest adapter)
+  --project-root PATH    Project root directory (for jest adapter, default: cwd)
   --batch-size N         Files per batch (default: 5)
   --redis-url URL        Redis URL (default: redis://localhost:6379)
   --key-rerun KEY        Per-runner rerun key for re-run support
   --key-rerun-ttl SECS   TTL for rerun key (default: 604800 / 1 week)
   --verbose              Show per-batch file list and full command output
   --json-out PATH        Write merged JSON results to file
-  -h, --help             Show this help`)
+  -h, --help             Show this help
+
+Adapters:
+  cli   (default) Spawns a shell command for each batch. Works with any test runner.
+        Requires --command.
+  jest  Runs Jest programmatically with haste map reuse. No process startup overhead.
+        Requires jest@^29.0.0 installed as a dependency.`)
     return 0
   }
 
+  const adapterType = (flags.adapter ?? process.env.SPECBANDIT_ADAPTER ?? 'cli').toLowerCase()
+
+  // For the jest adapter, command is not required
   const config = new Configuration({
     key: flags.key,
     command: flags.command,
@@ -120,14 +169,21 @@ Options:
     keyRerunTtl: flags['key-rerun-ttl'] ? parseInt(flags['key-rerun-ttl'], 10) : undefined,
     verbose: flags.verbose === 'true' ? true : undefined,
   })
-  config.validateForWork()
 
+  // Only validate command requirement for CLI adapter
+  if (adapterType === 'cli') {
+    config.validateForWork()
+  } else {
+    config.validate()
+  }
+
+  const adapter = buildAdapter(flags, config)
   const queue = new RedisQueue(config.redisUrl)
+
   try {
     const worker = new Worker({
       key: config.key!,
-      command: config.command!,
-      commandOpts: config.commandOpts,
+      adapter,
       batchSize: config.batchSize,
       keyRerun: config.keyRerun,
       keyRerunTtl: config.keyRerunTtl,
@@ -157,8 +213,11 @@ Push options:
 
 Work options:
   --key KEY              Redis queue key (required, or set SPECBANDIT_KEY)
-  --command CMD          Command to run with file paths (required, or set SPECBANDIT_COMMAND)
-  --command-opts OPTS    Extra options forwarded to the command (space-separated)
+  --adapter TYPE         Adapter type: 'cli' (default) or 'jest'
+  --command CMD          Command to run with file paths (required for cli adapter)
+  --command-opts OPTS    Extra options forwarded to the command/jest (space-separated)
+  --jest-config PATH     Path to jest config file (for jest adapter)
+  --project-root PATH    Project root directory (for jest adapter, default: cwd)
   --batch-size N         Files per batch (default: 5, or set SPECBANDIT_BATCH_SIZE)
   --redis-url URL        Redis URL (default: redis://localhost:6379)
   --key-rerun KEY        Per-runner rerun key for re-run support
@@ -169,8 +228,11 @@ Work options:
 Environment variables:
   SPECBANDIT_KEY              Queue key
   SPECBANDIT_REDIS_URL        Redis URL
-  SPECBANDIT_COMMAND          Command to run
-  SPECBANDIT_COMMAND_OPTS     Command options (space-separated)
+  SPECBANDIT_ADAPTER          Adapter type (cli/jest)
+  SPECBANDIT_COMMAND          Command to run (cli adapter)
+  SPECBANDIT_COMMAND_OPTS     Command/jest options (space-separated)
+  SPECBANDIT_JEST_CONFIG      Jest config path (jest adapter)
+  SPECBANDIT_PROJECT_ROOT     Project root (jest adapter)
   SPECBANDIT_BATCH_SIZE       Batch size
   SPECBANDIT_KEY_TTL          Key TTL in seconds (default: 21600)
   SPECBANDIT_KEY_RERUN        Per-runner rerun key
@@ -180,7 +242,12 @@ Environment variables:
 File input priority for push:
   1. stdin (piped)     echo "test/a.test.ts" | specbandit push --key KEY
   2. --pattern         specbandit push --key KEY --pattern 'test/**/*.test.ts'
-  3. direct args       specbandit push --key KEY test/a.test.ts test/b.test.ts`)
+  3. direct args       specbandit push --key KEY test/a.test.ts test/b.test.ts
+
+Adapters:
+  cli   (default) Spawns a shell command for each batch. Works with any test runner.
+  jest  Runs Jest programmatically with haste map reuse. No process startup overhead.
+        Requires jest@^29.0.0 installed as a project dependency.`)
 }
 
 export class CLI {

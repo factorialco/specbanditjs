@@ -1,6 +1,6 @@
 {
   "name": "@factorialco/specbandit",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Distributed test runner using Redis as a work queue. Push file paths to a Redis list, then multiple CI runners atomically steal batches and execute them via a configurable command.",
   "author": "Ferran Basora",
   "license": "MIT",
@@ -26,6 +26,14 @@
   "dependencies": {
     "fast-glob": "^3.3.2",
     "ioredis": "^5.4.1"
+  },
+  "peerDependencies": {
+    "jest": "^29.0.0"
+  },
+  "peerDependenciesMeta": {
+    "jest": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

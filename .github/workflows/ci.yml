@@ -65,27 +65,21 @@ jobs:
       - name: Build
         run: npm run build
 
-      # ── Scenario 1: all specs pass ──
+      # ── Scenario 1: CLI adapter — all pass (echo) ──
 
-      - name: "Scenario 1: All specs pass"
+      - name: "Scenario 1: CLI adapter — all pass"
         id: scenario1
         run: |
-          mkdir -p tmp/e2e_pass_specs
-          for i in $(seq 1 12); do
-            echo 'setTimeout(() => process.exit(0), 500)' > "tmp/e2e_pass_specs/slow_${i}.js"
-          done
-
-          node dist/bin.js push \
-            --key "e2e-pass-${{ github.run_id }}" \
-            --pattern 'tmp/e2e_pass_specs/*.js'
-
           KEY="e2e-pass-${{ github.run_id }}"
+          node dist/bin.js push --key "$KEY" \
+            apple banana cherry date elderberry fig grape \
+            honeydew kiwi lemon mango nectarine
 
-          GITHUB_STEP_SUMMARY= node dist/bin.js work --key "$KEY" --key-rerun "${KEY}-w1" --command node --batch-size 1 --verbose > pass-worker-1.log 2>&1 &
+          GITHUB_STEP_SUMMARY= node dist/bin.js work --key "$KEY" --key-rerun "${KEY}-w1" --command echo --batch-size 2 --verbose > pass-worker-1.log 2>&1 &
           PID1=$!
-          GITHUB_STEP_SUMMARY= node dist/bin.js work --key "$KEY" --key-rerun "${KEY}-w2" --command node --batch-size 1 --verbose > pass-worker-2.log 2>&1 &
+          GITHUB_STEP_SUMMARY= node dist/bin.js work --key "$KEY" --key-rerun "${KEY}-w2" --command echo --batch-size 2 --verbose > pass-worker-2.log 2>&1 &
           PID2=$!
-          GITHUB_STEP_SUMMARY= node dist/bin.js work --key "$KEY" --key-rerun "${KEY}-w3" --command node --batch-size 1 --verbose > pass-worker-3.log 2>&1 &
+          GITHUB_STEP_SUMMARY= node dist/bin.js work --key "$KEY" --key-rerun "${KEY}-w3" --command echo --batch-size 2 --verbose > pass-worker-3.log 2>&1 &
           PID3=$!
 
           FAIL=0
@@ -99,65 +93,53 @@ jobs:
             echo ""
           done
 
-          echo "## Scenario 1: All specs pass" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "3 workers competed for 12 passing scripts via work-stealing." >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Worker | Files | Status |" >> "$GITHUB_STEP_SUMMARY"
-          echo "|--------|-------|--------|" >> "$GITHUB_STEP_SUMMARY"
+          # All workers should succeed
+          if [ "$FAIL" -ne 0 ]; then
+            echo "::error::Expected all workers to pass"
+            exit 1
+          fi
+
+          # Every worker must have exhausted the queue or had nothing to do
           for i in 1 2 3; do
-            FILES=$(grep "^  tmp/" "pass-worker-${i}.log" | sed 's/^  //' | tr '\n' ', ' | sed 's/,$//')
-            if grep -q "SOME FAILED\|FAILED" "pass-worker-${i}.log"; then
-              STATUS="Failed"
-            elif grep -q "Nothing to do" "pass-worker-${i}.log"; then
-              STATUS="Idle (queue was empty)"
-            else
-              STATUS="Passed"
+            if ! grep -q "Queue exhausted\|Nothing to do" "pass-worker-${i}.log"; then
+              echo "::error::Worker ${i} did not exhaust the queue or report nothing to do"
+              FAIL=1
             fi
-            echo "| Worker ${i} | \`${FILES:-none}\` | ${STATUS} |" >> "$GITHUB_STEP_SUMMARY"
           done
+
+          echo "## Scenario 1: CLI adapter — all pass" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "<details><summary>Full worker logs</summary>" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          for i in 1 2 3; do
-            echo "**Worker ${i}**" >> "$GITHUB_STEP_SUMMARY"
-            echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo '```' >> "$GITHUB_STEP_SUMMARY"
-            cat "pass-worker-${i}.log" >> "$GITHUB_STEP_SUMMARY"
-            echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo '```' >> "$GITHUB_STEP_SUMMARY"
-            echo "" >> "$GITHUB_STEP_SUMMARY"
-          done
-          echo "</details>" >> "$GITHUB_STEP_SUMMARY"
+          echo "3 workers competed for 12 words via \`echo\` command." >> "$GITHUB_STEP_SUMMARY"
 
           exit $FAIL
 
-      # ── Scenario 2: some specs fail ──
+      # ── Scenario 2: CLI adapter — some fail ──
 
-      - name: "Scenario 2: Some specs fail"
+      - name: "Scenario 2: CLI adapter — some fail"
         id: scenario2
         if: always()
         run: |
-          mkdir -p tmp/e2e_fail_specs
-          for i in $(seq 1 8); do
-            echo 'setTimeout(() => process.exit(0), 300)' > "tmp/e2e_fail_specs/pass_${i}.js"
+          # Create a tiny script that exits 1 if any argument contains "FAIL"
+          cat > /tmp/check.sh << 'SCRIPT'
+          #!/bin/bash
+          for arg in "$@"; do
+            case "$arg" in *FAIL*) exit 1;; esac
           done
-          for i in $(seq 1 4); do
-            echo 'process.exit(1)' > "tmp/e2e_fail_specs/fail_${i}.js"
-          done
-
-          node dist/bin.js push \
-            --key "e2e-fail-${{ github.run_id }}" \
-            --pattern 'tmp/e2e_fail_specs/*.js'
+          SCRIPT
+          chmod +x /tmp/check.sh
 
           KEY="e2e-fail-${{ github.run_id }}"
+          node dist/bin.js push --key "$KEY" \
+            apple banana FAIL_cherry date FAIL_elderberry fig \
+            grape honeydew FAIL_kiwi lemon FAIL_mango nectarine
+
           mkdir -p tmp/e2e_fail_results
 
-          GITHUB_STEP_SUMMARY= node dist/bin.js work --key "$KEY" --key-rerun "${KEY}-w1" --command node --batch-size 1 --verbose --json-out tmp/e2e_fail_results/w1.json > fail-worker-1.log 2>&1 &
+          GITHUB_STEP_SUMMARY= node dist/bin.js work --key "$KEY" --key-rerun "${KEY}-w1" --command /tmp/check.sh --batch-size 1 --verbose --json-out tmp/e2e_fail_results/w1.json > fail-worker-1.log 2>&1 &
           PID1=$!
-          GITHUB_STEP_SUMMARY= node dist/bin.js work --key "$KEY" --key-rerun "${KEY}-w2" --command node --batch-size 1 --verbose --json-out tmp/e2e_fail_results/w2.json > fail-worker-2.log 2>&1 &
+          GITHUB_STEP_SUMMARY= node dist/bin.js work --key "$KEY" --key-rerun "${KEY}-w2" --command /tmp/check.sh --batch-size 1 --verbose --json-out tmp/e2e_fail_results/w2.json > fail-worker-2.log 2>&1 &
           PID2=$!
-          GITHUB_STEP_SUMMARY= node dist/bin.js work --key "$KEY" --key-rerun "${KEY}-w3" --command node --batch-size 1 --verbose --json-out tmp/e2e_fail_results/w3.json > fail-worker-3.log 2>&1 &
+          GITHUB_STEP_SUMMARY= node dist/bin.js work --key "$KEY" --key-rerun "${KEY}-w3" --command /tmp/check.sh --batch-size 1 --verbose --json-out tmp/e2e_fail_results/w3.json > fail-worker-3.log 2>&1 &
           PID3=$!
 
           W1_EXIT=0; wait $PID1 || W1_EXIT=$?
@@ -171,19 +153,11 @@ jobs:
             echo ""
           done
 
-          # --- Assertions ---
           ERRORS=0
 
           # At least one worker must have failed
           if [ "$W1_EXIT" -eq 0 ] && [ "$W2_EXIT" -eq 0 ] && [ "$W3_EXIT" -eq 0 ]; then
-            echo "::error::Expected at least one worker to exit with code 1, but all exited 0"
-            ERRORS=$((ERRORS + 1))
-          fi
-
-          # All 12 script files must appear across the worker logs
-          TOTAL_FILES=$(cat fail-worker-*.log | grep "^  tmp/" | wc -l | tr -d ' ')
-          if [ "$TOTAL_FILES" -ne 12 ]; then
-            echo "::error::Expected 12 spec files across all workers, found $TOTAL_FILES"
+            echo "::error::Expected at least one worker to fail"
             ERRORS=$((ERRORS + 1))
           fi
 
@@ -213,7 +187,7 @@ jobs:
             fi
           done
 
-          # JSON output: each worker's JSON must have batch_timings and correct total_files
+          # JSON output validation
           TOTAL_JSON_FILES=0
           TOTAL_JSON_FAILED=0
           for i in 1 2 3; do
@@ -224,55 +198,223 @@ jobs:
               echo "Worker ${i} JSON: ${W_FILES} files, ${W_FAILED} failed batches"
               TOTAL_JSON_FILES=$((TOTAL_JSON_FILES + W_FILES))
               TOTAL_JSON_FAILED=$((TOTAL_JSON_FAILED + W_FAILED))
-
-              HAS_TIMINGS=$(node -e "const j=JSON.parse(require('fs').readFileSync('${JSON_FILE}','utf8')); console.log('batch_timings' in j)")
-              if [ "$HAS_TIMINGS" != "true" ]; then
-                echo "::error::Worker ${i} JSON missing batch_timings key"
-                ERRORS=$((ERRORS + 1))
-              fi
             fi
           done
 
-          # Total files across all JSON files must equal 12
           if [ "$TOTAL_JSON_FILES" -ne 12 ]; then
             echo "::error::Expected 12 total files in merged JSONs, found $TOTAL_JSON_FILES"
             ERRORS=$((ERRORS + 1))
           fi
 
-          # Total failed batches must equal 4
           if [ "$TOTAL_JSON_FAILED" -ne 4 ]; then
             echo "::error::Expected 4 total failed batches in merged JSONs, found $TOTAL_JSON_FAILED"
             ERRORS=$((ERRORS + 1))
           fi
 
-          echo "## Scenario 2: Some specs fail" >> "$GITHUB_STEP_SUMMARY"
+          echo "## Scenario 2: CLI adapter — some fail" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "3 workers competed for a mix of 8 passing and 4 failing scripts." >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Worker | Exit | Files | Status |" >> "$GITHUB_STEP_SUMMARY"
-          echo "|--------|------|-------|--------|" >> "$GITHUB_STEP_SUMMARY"
-          for i in 1 2 3; do
-            EXIT_VAR="W${i}_EXIT"
-            EXIT_CODE=$(eval echo "\$$EXIT_VAR")
-            FILES=$(grep "^  tmp/" "fail-worker-${i}.log" | sed 's/^  //' | tr '\n' ', ' | sed 's/,$//')
-            if grep -q "SOME FAILED" "fail-worker-${i}.log"; then
-              STATUS="Failed"
-            elif grep -q "Nothing to do" "fail-worker-${i}.log"; then
-              STATUS="Idle (queue was empty)"
-            else
-              STATUS="Passed"
-            fi
-            echo "| Worker ${i} | ${EXIT_CODE} | \`${FILES:-none}\` | ${STATUS} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "3 workers competed for 12 words (4 with FAIL prefix) via \`/tmp/check.sh\`." >> "$GITHUB_STEP_SUMMARY"
+
+          exit $ERRORS
+
+      # ── Scenario 3: Jest adapter — all specs pass ──
+
+      - name: "Scenario 3: Jest adapter — all specs pass"
+        id: scenario3
+        if: always()
+        run: |
+          cd test/fixtures/jest-project
+          npm install --ignore-scripts
+
+          # Push only the passing specs (6 files)
+          SPECBANDIT="../../../dist/bin.js"
+          KEY="e2e-jest-pass-${{ github.run_id }}"
+          node "$SPECBANDIT" push --key "$KEY" \
+            specs/math.test.js specs/strings.test.js specs/arrays.test.js \
+            specs/objects.test.js specs/async.test.js specs/regex.test.js
+
+          GITHUB_STEP_SUMMARY= node "$SPECBANDIT" work --key "$KEY" --key-rerun "${KEY}-w1" \
+            --adapter jest --jest-config ./jest.config.js --project-root . \
+            --command-opts "--cacheDirectory .jest-cache-w1" \
+            --batch-size 2 --verbose > jest-pass-w1.log 2>&1 &
+          PID1=$!
+          GITHUB_STEP_SUMMARY= node "$SPECBANDIT" work --key "$KEY" --key-rerun "${KEY}-w2" \
+            --adapter jest --jest-config ./jest.config.js --project-root . \
+            --command-opts "--cacheDirectory .jest-cache-w2" \
+            --batch-size 2 --verbose > jest-pass-w2.log 2>&1 &
+          PID2=$!
+
+          FAIL=0
+          wait $PID1 || FAIL=1
+          wait $PID2 || FAIL=1
+
+          for i in 1 2; do
+            echo "========== Jest Worker ${i} =========="
+            cat "jest-pass-w${i}.log"
+            echo ""
           done
+
+          # All workers should succeed
+          if [ "$FAIL" -ne 0 ]; then
+            echo "::error::Expected all Jest workers to pass, but at least one failed"
+          fi
+
+          # Verify haste map setup message appeared (proves Jest adapter was used)
+          ADAPTER_USED=0
+          for i in 1 2; do
+            if grep -q "\[specbandit:jest\] Setup complete" "jest-pass-w${i}.log"; then
+              ADAPTER_USED=1
+            fi
+          done
+          if [ "$ADAPTER_USED" -eq 0 ]; then
+            echo "::error::No worker log contains Jest adapter setup message"
+            FAIL=1
+          fi
+
+          # Every worker must have exhausted the queue or had nothing to do
+          for i in 1 2; do
+            if ! grep -q "Queue exhausted\|Nothing to do" "jest-pass-w${i}.log"; then
+              echo "::error::Jest worker ${i} did not exhaust the queue or report nothing to do"
+              FAIL=1
+            fi
+          done
+
+          echo "## Scenario 3: Jest adapter — all specs pass" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "2 workers used the Jest adapter to run 6 passing specs via work-stealing." >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "<details><summary>Full worker logs</summary>" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          for i in 1 2 3; do
+          for i in 1 2; do
             echo "**Worker ${i}**" >> "$GITHUB_STEP_SUMMARY"
-            echo "" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
-            cat "fail-worker-${i}.log" >> "$GITHUB_STEP_SUMMARY"
+            cat "jest-pass-w${i}.log" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
             echo "" >> "$GITHUB_STEP_SUMMARY"
+          done
+          echo "</details>" >> "$GITHUB_STEP_SUMMARY"
+
+          exit $FAIL
+
+      # ── Scenario 4: Jest adapter — some specs fail ──
+
+      - name: "Scenario 4: Jest adapter — some specs fail"
+        id: scenario4
+        if: always()
+        run: |
+          cd test/fixtures/jest-project
+
+          # Push all specs including the 2 failing ones (8 total)
+          SPECBANDIT="../../../dist/bin.js"
+          KEY="e2e-jest-fail-${{ github.run_id }}"
+          node "$SPECBANDIT" push --key "$KEY" \
+            specs/math.test.js specs/strings.test.js specs/arrays.test.js \
+            specs/objects.test.js specs/async.test.js specs/regex.test.js \
+            specs/fail-math.test.js specs/fail-string.test.js
+
+          mkdir -p jest-fail-results
+
+          GITHUB_STEP_SUMMARY= node "$SPECBANDIT" work --key "$KEY" --key-rerun "${KEY}-w1" \
+            --adapter jest --jest-config ./jest.config.js --project-root . \
+            --command-opts "--cacheDirectory .jest-cache-w1" \
+            --batch-size 1 --verbose --json-out jest-fail-results/w1.json > jest-fail-w1.log 2>&1 &
+          PID1=$!
+          GITHUB_STEP_SUMMARY= node "$SPECBANDIT" work --key "$KEY" --key-rerun "${KEY}-w2" \
+            --adapter jest --jest-config ./jest.config.js --project-root . \
+            --command-opts "--cacheDirectory .jest-cache-w2" \
+            --batch-size 1 --verbose --json-out jest-fail-results/w2.json > jest-fail-w2.log 2>&1 &
+          PID2=$!
+
+          W1_EXIT=0; wait $PID1 || W1_EXIT=$?
+          W2_EXIT=0; wait $PID2 || W2_EXIT=$?
+
+          for i in 1 2; do
+            EXIT_VAR="W${i}_EXIT"
+            echo "========== Jest Worker ${i} (exit: $(eval echo "\$$EXIT_VAR")) =========="
+            cat "jest-fail-w${i}.log"
+            echo ""
+          done
+
+          ERRORS=0
+
+          # At least one worker must have failed (because of fail-math.test.js / fail-string.test.js)
+          if [ "$W1_EXIT" -eq 0 ] && [ "$W2_EXIT" -eq 0 ]; then
+            echo "::error::Expected at least one Jest worker to exit non-zero, but all exited 0"
+            ERRORS=$((ERRORS + 1))
+          fi
+
+          # Verify Jest adapter was actually used
+          ADAPTER_USED=0
+          for i in 1 2; do
+            if grep -q "\[specbandit:jest\] Setup complete" "jest-fail-w${i}.log"; then
+              ADAPTER_USED=1
+            fi
+          done
+          if [ "$ADAPTER_USED" -eq 0 ]; then
+            echo "::error::No worker log contains Jest adapter setup message"
+            ERRORS=$((ERRORS + 1))
+          fi
+
+          # At least one worker log must contain "SOME FAILED"
+          if ! grep -q "SOME FAILED" jest-fail-w*.log; then
+            echo "::error::No Jest worker reported 'SOME FAILED'"
+            ERRORS=$((ERRORS + 1))
+          fi
+
+          # At least one batch passed somewhere
+          if ! grep -q "passed\." jest-fail-w*.log; then
+            echo "::error::No Jest worker reported any passing batch"
+            ERRORS=$((ERRORS + 1))
+          fi
+
+          # At least one batch failed somewhere
+          if ! grep -q "FAILED (exit code:" jest-fail-w*.log; then
+            echo "::error::No Jest worker reported any failing batch"
+            ERRORS=$((ERRORS + 1))
+          fi
+
+          # Every worker must have exhausted the queue or had nothing to do
+          for i in 1 2; do
+            if ! grep -q "Queue exhausted\|Nothing to do" "jest-fail-w${i}.log"; then
+              echo "::error::Jest worker ${i} did not exhaust the queue or report nothing to do"
+              ERRORS=$((ERRORS + 1))
+            fi
+          done
+
+          # JSON output validation
+          TOTAL_JSON_FILES=0
+          TOTAL_JSON_FAILED=0
+          for i in 1 2; do
+            JSON_FILE="jest-fail-results/w${i}.json"
+            if [ -f "$JSON_FILE" ]; then
+              W_FILES=$(node -e "const j=JSON.parse(require('fs').readFileSync('${JSON_FILE}','utf8')); console.log(j.summary.total_files)")
+              W_FAILED=$(node -e "const j=JSON.parse(require('fs').readFileSync('${JSON_FILE}','utf8')); console.log(j.summary.failed_batches)")
+              echo "Jest Worker ${i} JSON: ${W_FILES} files, ${W_FAILED} failed batches"
+              TOTAL_JSON_FILES=$((TOTAL_JSON_FILES + W_FILES))
+              TOTAL_JSON_FAILED=$((TOTAL_JSON_FAILED + W_FAILED))
+            fi
+          done
+
+          if [ "$TOTAL_JSON_FILES" -ne 8 ]; then
+            echo "::error::Expected 8 total files in merged Jest JSONs, found $TOTAL_JSON_FILES"
+            ERRORS=$((ERRORS + 1))
+          fi
+
+          if [ "$TOTAL_JSON_FAILED" -ne 2 ]; then
+            echo "::error::Expected 2 total failed batches in merged Jest JSONs, found $TOTAL_JSON_FAILED"
+            ERRORS=$((ERRORS + 1))
+          fi
+
+          echo "## Scenario 4: Jest adapter — some specs fail" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "2 workers used the Jest adapter for a mix of 6 passing and 2 failing specs." >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "<details><summary>Full worker logs</summary>" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          for i in 1 2; do
+            echo "**Worker ${i}**" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            cat "jest-fail-w${i}.log" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
             echo "" >> "$GITHUB_STEP_SUMMARY"
           done
@@ -285,7 +427,12 @@ jobs:
       - name: "Check all scenarios passed"
         if: always()
         run: |
-          if [ "${{ steps.scenario1.outcome }}" != "success" ] || [ "${{ steps.scenario2.outcome }}" != "success" ]; then
-            echo "::error::One or more E2E scenarios failed"
+          FAILED=""
+          if [ "${{ steps.scenario1.outcome }}" != "success" ]; then FAILED="$FAILED scenario1"; fi
+          if [ "${{ steps.scenario2.outcome }}" != "success" ]; then FAILED="$FAILED scenario2"; fi
+          if [ "${{ steps.scenario3.outcome }}" != "success" ]; then FAILED="$FAILED scenario3"; fi
+          if [ "${{ steps.scenario4.outcome }}" != "success" ]; then FAILED="$FAILED scenario4"; fi
+          if [ -n "$FAILED" ]; then
+            echo "::error::Failed scenarios:$FAILED"
             exit 1
           fi
