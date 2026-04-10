@@ -70,6 +70,9 @@ export class JestAdapter implements Adapter {
   // Require function rooted at projectRoot for resolving Jest packages
   private projectRequire: NodeRequire
 
+  // Diagnostic: unique ID per instance to detect multi-instance issues
+  private _instanceId = Math.random().toString(36).slice(2, 8)
+
   constructor(options: JestAdapterOptions = {}) {
     this.projectRoot = options.projectRoot ?? process.cwd()
     this.jestConfig = options.jestConfig
@@ -145,6 +148,14 @@ export class JestAdapter implements Adapter {
       this.log(
         `[specbandit:jest] Setup complete in ${duration}s (${this.contexts.length} project(s), haste map built)`,
       )
+      this.log(
+        `[specbandit:jest] Post-setup state check: contexts=${this.contexts ? 'set' : 'null'}, ` +
+        `globalConfig=${this.baseGlobalConfig ? 'set' : 'null'}, ` +
+        `runJestFn=${this.runJestFn ? 'set' : 'null'}, ` +
+        `TestWatcher=${this.TestWatcherClass ? 'set' : 'null'}, ` +
+        `this.constructor.name=${this.constructor.name}, ` +
+        `instanceId=${this._instanceId}`,
+      )
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error)
       throw new Error(
@@ -165,6 +176,13 @@ export class JestAdapter implements Adapter {
     const TestWatcher = this.TestWatcherClass
 
     if (!contexts || !baseGlobalConfig || !runJest || !TestWatcher) {
+      this.log(
+        `[specbandit:jest] DIAGNOSTIC runBatch entry: instanceId=${this._instanceId}, ` +
+        `contexts=${this.contexts === null ? 'null' : 'set'}, ` +
+        `globalConfig=${this.baseGlobalConfig === null ? 'null' : 'set'}, ` +
+        `runJestFn=${this.runJestFn === null ? 'null' : 'set'}, ` +
+        `TestWatcher=${this.TestWatcherClass === null ? 'null' : 'set'}`,
+      )
       throw new Error(
         `[specbandit:jest] Adapter not initialized. Call setup() first.`,
       )
@@ -281,6 +299,8 @@ export class JestAdapter implements Adapter {
   }
 
   async teardown(): Promise<void> {
+    this.log(`[specbandit:jest] Teardown called on instanceId=${this._instanceId}, contexts=${this.contexts ? 'set' : 'null'}`)
+    this.log(`[specbandit:jest] Teardown stack: ${new Error().stack?.split('\n').slice(1, 5).join(' <- ')}`)
     this.contexts = null
     this.baseGlobalConfig = null
     this.runJestFn = null
