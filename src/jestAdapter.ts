@@ -95,10 +95,10 @@ export class JestAdapter implements Adapter {
       // Using createRequire ensures resolution happens from projectRoot,
       // not from specbandit's installation directory.
       //
-      // For @jest/core internal files (runJest.js, createContext.js), we
-      // resolve the package's main entry to find its directory, then
-      // require the internal files by absolute path. This bypasses the
-      // "exports" field in package.json which blocks deep imports.
+      // For internal files of Jest packages, we resolve the package's main
+      // entry to find its directory, then require internal files by absolute
+      // path. This bypasses the "exports" field in package.json which blocks
+      // deep imports (affects @jest/core and jest-watcher).
       const jestConfigMod = this.projectRequire('jest-config')
       const runtimeMod = this.projectRequire('jest-runtime')
       const watcherMod = this.projectRequire('jest-watcher')
@@ -116,11 +116,13 @@ export class JestAdapter implements Adapter {
 
       // jest-watcher exports TestWatcher differently depending on the module
       // resolution context (CJS named export, CJS default, or ESM interop).
-      // Try all possible shapes to handle pnpm hoisting and bundler interop.
+      // Try the named export first, then fall back to resolving the internal
+      // file by absolute path (same approach as @jest/core above).
       this.TestWatcherClass = watcherMod.TestWatcher ?? watcherMod.default?.TestWatcher ?? watcherMod.default
       if (!this.TestWatcherClass) {
-        // Last resort: require TestWatcher.js directly
-        const testWatcherMod = this.projectRequire('jest-watcher/build/TestWatcher')
+        const watcherMainPath = this.projectRequire.resolve('jest-watcher')
+        const watcherPkgDir = path.dirname(path.dirname(watcherMainPath))
+        const testWatcherMod = this.projectRequire(path.join(watcherPkgDir, 'build', 'TestWatcher.js'))
         this.TestWatcherClass = testWatcherMod.default ?? testWatcherMod.TestWatcher ?? testWatcherMod
       }
 
