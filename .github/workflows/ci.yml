@@ -520,6 +520,169 @@ jobs:
 
           exit $FAIL
 
+      # ── Scenario 6: Cypress adapter — all specs pass ──
+
+      - name: "Scenario 6: Cypress adapter — all specs pass"
+        id: scenario6
+        if: always()
+        run: |
+          cd test/fixtures/cypress-project
+          npm install
+
+          # Push only the passing specs (4 files)
+          SPECBANDIT="../../../dist/bin.js"
+          KEY="e2e-cypress-pass-${{ github.run_id }}"
+          node "$SPECBANDIT" push --key "$KEY" \
+            cypress/e2e/math.cy.js cypress/e2e/strings.cy.js \
+            cypress/e2e/arrays.cy.js cypress/e2e/objects.cy.js
+
+          # Single worker to avoid Xvfb display conflicts in CI
+          # (parallel work-stealing is already proven by CLI/Jest scenarios)
+          FAIL=0
+          GITHUB_STEP_SUMMARY= node "$SPECBANDIT" work --key "$KEY" --key-rerun "${KEY}-w1" \
+            --adapter cypress --cypress-config ./cypress.config.js --project-root . \
+            --batch-size 2 --verbose > cypress-pass-w1.log 2>&1 || FAIL=$?
+
+          echo "========== Cypress Worker 1 =========="
+          cat "cypress-pass-w1.log"
+          echo ""
+
+          # Worker should succeed
+          if [ "$FAIL" -ne 0 ]; then
+            echo "::error::Expected Cypress worker to pass, but it failed"
+          fi
+
+          # Verify Cypress adapter setup message appeared (proves Cypress adapter was used)
+          if ! grep -q "\[specbandit:cypress\] Setup complete" "cypress-pass-w1.log"; then
+            echo "::error::Worker log does not contain Cypress adapter setup message"
+            FAIL=1
+          fi
+
+          # Worker must have exhausted the queue
+          if ! grep -q "Queue exhausted" "cypress-pass-w1.log"; then
+            echo "::error::Cypress worker did not exhaust the queue"
+            FAIL=1
+          fi
+
+          echo "## Scenario 6: Cypress adapter — all specs pass" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "1 worker used the Cypress adapter to run 4 passing specs." >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "<details><summary>Full worker logs</summary>" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Worker 1**" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          cat "cypress-pass-w1.log" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "</details>" >> "$GITHUB_STEP_SUMMARY"
+
+          exit $FAIL
+
+      # ── Scenario 7: Cypress adapter — some specs fail ──
+
+      - name: "Scenario 7: Cypress adapter — some specs fail"
+        id: scenario7
+        if: always()
+        run: |
+          cd test/fixtures/cypress-project
+
+          # Push all specs including the 2 failing ones (6 total)
+          SPECBANDIT="../../../dist/bin.js"
+          KEY="e2e-cypress-fail-${{ github.run_id }}"
+          node "$SPECBANDIT" push --key "$KEY" \
+            cypress/e2e/math.cy.js cypress/e2e/strings.cy.js \
+            cypress/e2e/arrays.cy.js cypress/e2e/objects.cy.js \
+            cypress/e2e/fail-math.cy.js cypress/e2e/fail-strings.cy.js
+
+          mkdir -p cypress-fail-results
+
+          # Single worker to avoid Xvfb display conflicts in CI
+          W1_EXIT=0
+          GITHUB_STEP_SUMMARY= node "$SPECBANDIT" work --key "$KEY" --key-rerun "${KEY}-w1" \
+            --adapter cypress --cypress-config ./cypress.config.js --project-root . \
+            --batch-size 1 --verbose --json-out cypress-fail-results/w1.json > cypress-fail-w1.log 2>&1 || W1_EXIT=$?
+
+          echo "========== Cypress Worker 1 (exit: $W1_EXIT) =========="
+          cat "cypress-fail-w1.log"
+          echo ""
+
+          ERRORS=0
+
+          # Worker must have failed (because of fail-math.cy.js / fail-strings.cy.js)
+          if [ "$W1_EXIT" -eq 0 ]; then
+            echo "::error::Expected Cypress worker to exit non-zero, but it exited 0"
+            ERRORS=$((ERRORS + 1))
+          fi
+
+          # Verify Cypress adapter was actually used
+          if ! grep -q "\[specbandit:cypress\] Setup complete" "cypress-fail-w1.log"; then
+            echo "::error::Worker log does not contain Cypress adapter setup message"
+            ERRORS=$((ERRORS + 1))
+          fi
+
+          # Worker log must contain "SOME FAILED"
+          if ! grep -q "SOME FAILED" cypress-fail-w1.log; then
+            echo "::error::Cypress worker did not report 'SOME FAILED'"
+            ERRORS=$((ERRORS + 1))
+          fi
+
+          # At least one batch passed
+          if ! grep -q "passed\." cypress-fail-w1.log; then
+            echo "::error::Cypress worker did not report any passing batch"
+            ERRORS=$((ERRORS + 1))
+          fi
+
+          # At least one batch failed
+          if ! grep -q "FAILED (exit code:" cypress-fail-w1.log; then
+            echo "::error::Cypress worker did not report any failing batch"
+            ERRORS=$((ERRORS + 1))
+          fi
+
+          # Worker must have exhausted the queue
+          if ! grep -q "Queue exhausted" "cypress-fail-w1.log"; then
+            echo "::error::Cypress worker did not exhaust the queue"
+            ERRORS=$((ERRORS + 1))
+          fi
+
+          # JSON output validation
+          JSON_FILE="cypress-fail-results/w1.json"
+          if [ -f "$JSON_FILE" ]; then
+            TOTAL_JSON_FILES=$(node -e "const j=JSON.parse(require('fs').readFileSync('${JSON_FILE}','utf8')); console.log(j.summary.total_files)")
+            TOTAL_JSON_FAILED=$(node -e "const j=JSON.parse(require('fs').readFileSync('${JSON_FILE}','utf8')); console.log(j.summary.failed_batches)")
+            echo "Cypress Worker 1 JSON: ${TOTAL_JSON_FILES} files, ${TOTAL_JSON_FAILED} failed batches"
+          else
+            echo "::error::JSON output file not found"
+            TOTAL_JSON_FILES=0
+            TOTAL_JSON_FAILED=0
+            ERRORS=$((ERRORS + 1))
+          fi
+
+          if [ "$TOTAL_JSON_FILES" -ne 6 ]; then
+            echo "::error::Expected 6 total files in Cypress JSON, found $TOTAL_JSON_FILES"
+            ERRORS=$((ERRORS + 1))
+          fi
+
+          if [ "$TOTAL_JSON_FAILED" -ne 2 ]; then
+            echo "::error::Expected 2 total failed batches in Cypress JSON, found $TOTAL_JSON_FAILED"
+            ERRORS=$((ERRORS + 1))
+          fi
+
+          echo "## Scenario 7: Cypress adapter — some specs fail" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "1 worker used the Cypress adapter for a mix of 4 passing and 2 failing specs." >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "<details><summary>Full worker logs</summary>" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Worker 1**" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          cat "cypress-fail-w1.log" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "</details>" >> "$GITHUB_STEP_SUMMARY"
+
+          exit $ERRORS
+
       # ── Final gate ──
 
       - name: "Check all scenarios passed"
@@ -531,6 +694,8 @@ jobs:
           if [ "${{ steps.scenario3.outcome }}" != "success" ]; then FAILED="$FAILED scenario3"; fi
           if [ "${{ steps.scenario4.outcome }}" != "success" ]; then FAILED="$FAILED scenario4"; fi
           if [ "${{ steps.scenario5.outcome }}" != "success" ]; then FAILED="$FAILED scenario5"; fi
+          if [ "${{ steps.scenario6.outcome }}" != "success" ]; then FAILED="$FAILED scenario6"; fi
+          if [ "${{ steps.scenario7.outcome }}" != "success" ]; then FAILED="$FAILED scenario7"; fi
           if [ -n "$FAILED" ]; then
             echo "::error::Failed scenarios:$FAILED"
             exit 1
