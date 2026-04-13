@@ -538,11 +538,10 @@ jobs:
 
           # Single worker to avoid Xvfb display conflicts in CI
           # (parallel work-stealing is already proven by CLI/Jest scenarios)
+          FAIL=0
           GITHUB_STEP_SUMMARY= node "$SPECBANDIT" work --key "$KEY" --key-rerun "${KEY}-w1" \
             --adapter cypress --cypress-config ./cypress.config.js --project-root . \
-            --batch-size 2 --verbose > cypress-pass-w1.log 2>&1
-
-          FAIL=$?
+            --batch-size 2 --verbose > cypress-pass-w1.log 2>&1 || FAIL=$?
 
           echo "========== Cypress Worker 1 =========="
           cat "cypress-pass-w1.log"
@@ -599,11 +598,10 @@ jobs:
           mkdir -p cypress-fail-results
 
           # Single worker to avoid Xvfb display conflicts in CI
+          W1_EXIT=0
           GITHUB_STEP_SUMMARY= node "$SPECBANDIT" work --key "$KEY" --key-rerun "${KEY}-w1" \
             --adapter cypress --cypress-config ./cypress.config.js --project-root . \
-            --batch-size 1 --verbose --json-out cypress-fail-results/w1.json > cypress-fail-w1.log 2>&1
-
-          W1_EXIT=$?
+            --batch-size 1 --verbose --json-out cypress-fail-results/w1.json > cypress-fail-w1.log 2>&1 || W1_EXIT=$?
 
           echo "========== Cypress Worker 1 (exit: $W1_EXIT) =========="
           cat "cypress-fail-w1.log"
