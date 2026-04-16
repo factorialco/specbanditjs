@@ -1,9 +1,36 @@
 import { performance } from 'node:perf_hooks'
 import { createRequire } from 'node:module'
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, readFileSync, existsSync } from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import type { Adapter, BatchResult } from './adapter.js'
+
+/**
+ * Walk up from a resolved module path to find the package directory
+ * containing a package.json with the expected name. This is more robust
+ * than assuming a fixed depth (e.g. dirname twice) which can break under
+ * pnpm's strict hoisting or non-standard package layouts.
+ */
+function findPackageDir(resolvedPath: string, expectedName: string): string {
+  let dir = path.dirname(resolvedPath)
+  const root = path.parse(dir).root
+  while (dir !== root) {
+    const pkgJsonPath = path.join(dir, 'package.json')
+    if (existsSync(pkgJsonPath)) {
+      try {
+        const pkg = JSON.parse(readFileSync(pkgJsonPath, 'utf8'))
+        if (pkg.name === expectedName) {
+          return dir
+        }
+      } catch {
+        // malformed package.json, keep walking
+      }
+    }
+    dir = path.dirname(dir)
+  }
+  // Fallback: assume 2 levels up from main entry (original behavior)
+  return path.dirname(path.dirname(resolvedPath))
+}
 
 /**
  * Options for the Jest adapter.
@@ -70,6 +97,9 @@ export class JestAdapter implements Adapter {
   // Require function rooted at projectRoot for resolving Jest packages
   private projectRequire: NodeRequire
 
+  // Require function rooted at @jest/core for resolving sibling Jest packages
+  private coreRequire: NodeRequire | null = null
+
   constructor(options: JestAdapterOptions = {}) {
     this.projectRoot = options.projectRoot ?? process.cwd()
     this.jestConfig = options.jestConfig
@@ -102,11 +132,18 @@ export class JestAdapter implements Adapter {
       // pnpm hoisting can cause the project root to resolve a different major
       // version (e.g. jest-watcher@27 instead of @29) which has incompatible APIs.
       const coreMainPath = this.projectRequire.resolve('@jest/core')
-      const corePkgDir = path.dirname(path.dirname(coreMainPath))
+
+      // Find @jest/core's package directory by locating its package.json.
+      // We walk up from the resolved main entry until we find package.json
+      // with name "@jest/core". This is more robust than assuming a fixed
+      // directory depth (e.g. build/index.js being 2 levels deep), which
+      // can break under different package managers or resolution strategies.
+      const corePkgDir = findPackageDir(coreMainPath, '@jest/core')
 
       // Create a require function rooted at @jest/core's location so all
       // sibling Jest packages resolve to the same major version.
       const coreRequire = createRequire(path.join(corePkgDir, 'index.js'))
+      this.coreRequire = coreRequire
 
       const jestConfigMod = coreRequire('jest-config')
       const runtimeMod = coreRequire('jest-runtime')
@@ -126,7 +163,7 @@ export class JestAdapter implements Adapter {
       if (!this.TestWatcherClass) {
         // Absolute path fallback — bypasses the "exports" field
         const watcherMainPath = coreRequire.resolve('jest-watcher')
-        const watcherPkgDir = path.dirname(path.dirname(watcherMainPath))
+        const watcherPkgDir = findPackageDir(watcherMainPath, 'jest-watcher')
         const testWatcherMod = this.projectRequire(path.join(watcherPkgDir, 'build', 'TestWatcher.js'))
         this.TestWatcherClass = testWatcherMod.default ?? testWatcherMod.TestWatcher ?? testWatcherMod
       }
@@ -291,7 +328,7 @@ export class JestAdapter implements Adapter {
 
     // Clear the resolver cache between batches
     try {
-      const resolverMod = this.projectRequire('jest-resolve')
+      const resolverMod = (this.coreRequire ?? this.projectRequire)('jest-resolve')
       const Resolver = resolverMod.default ?? resolverMod
       if (typeof Resolver.clearDefaultResolverCache === 'function') {
         Resolver.clearDefaultResolverCache()
@@ -311,6 +348,7 @@ export class JestAdapter implements Adapter {
     this.baseGlobalConfig = null
     this.runJestFn = null
     this.TestWatcherClass = null
+    this.coreRequire = null
     this.log('[specbandit:jest] Teardown complete.')
   }
 
