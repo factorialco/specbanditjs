@@ -127,11 +127,19 @@ export class JestAdapter implements Adapter {
       // absolute path. This bypasses the "exports" field in package.json
       // which blocks deep imports.
       //
-      // IMPORTANT: All Jest packages (jest-config, jest-runtime, jest-watcher)
-      // must be resolved from @jest/core's directory, not from the project root.
-      // pnpm hoisting can cause the project root to resolve a different major
-      // version (e.g. jest-watcher@27 instead of @29) which has incompatible APIs.
-      const coreMainPath = this.projectRequire.resolve('@jest/core')
+      // IMPORTANT: We must resolve @jest/core through jest's own directory,
+      // not directly from the project root. In pnpm monorepos, the project
+      // root may resolve @jest/core to a different major version (e.g. @27
+      // from another workspace like webpage) instead of the expected @29.
+      // First resolve `jest` itself, then resolve `@jest/core` from jest's
+      // directory. This guarantees we get the @jest/core version that matches
+      // the installed jest (e.g. @jest/core@29 for jest@29), even when pnpm
+      // hoisting makes a different major version (e.g. @jest/core@27 from
+      // another workspace) visible from the project root.
+      const jestMainPath = this.projectRequire.resolve('jest')
+      const jestPkgDir = findPackageDir(jestMainPath, 'jest')
+      const jestRequire = createRequire(path.join(jestPkgDir, 'index.js'))
+      const coreMainPath = jestRequire.resolve('@jest/core')
 
       // Find @jest/core's package directory by locating its package.json.
       // We walk up from the resolved main entry until we find package.json
