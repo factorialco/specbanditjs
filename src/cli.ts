@@ -24,7 +24,7 @@ function parseArgs(argv: string[]): { flags: Record<string, string>; positional:
     if (arg.startsWith('--')) {
       const key = arg.slice(2)
       // Boolean flags
-      if (key === 'verbose' || key === 'help') {
+      if (key === 'verbose' || key === 'help' || key === 'rerun') {
         flags[key] = 'true'
         i++
         continue
@@ -157,7 +157,8 @@ Options:
   --batch-size N         Files per batch (default: 5)
   --redis-url URL        Redis URL (default: redis://localhost:6379)
   --key-rerun KEY        Per-runner rerun key for re-run support
-  --key-rerun-ttl SECS   TTL for rerun key (default: 604800 / 1 week)
+   --key-rerun-ttl SECS   TTL for rerun key (default: 604800 / 1 week)
+  --rerun                Safety flag: fail if rerun key is empty (prevents silent false passes)
   --verbose              Show per-batch file list and full command output
   --json-out PATH        Write merged JSON results to file
   -h, --help             Show this help
@@ -190,6 +191,7 @@ Adapters:
     redisUrl: flags['redis-url'],
     keyRerun: flags['key-rerun'],
     keyRerunTtl: flags['key-rerun-ttl'] ? parseInt(flags['key-rerun-ttl'], 10) : undefined,
+    rerun: flags.rerun === 'true' ? true : undefined,
     verbose: flags.verbose === 'true' ? true : undefined,
   })
 
@@ -212,6 +214,7 @@ Adapters:
       batchSize: config.batchSize,
       keyRerun: config.keyRerun,
       keyRerunTtl: config.keyRerunTtl,
+      rerun: config.rerun,
       verbose: config.verbose,
       queue,
       jsonOut: flags['json-out'] ?? null,
@@ -250,6 +253,7 @@ Work options:
   --redis-url URL        Redis URL (default: redis://localhost:6379)
   --key-rerun KEY        Per-runner rerun key for re-run support
   --key-rerun-ttl N      TTL for rerun key (default: 604800 / 1 week)
+  --rerun                Safety flag: fail if rerun key is empty
   --verbose              Show per-batch file list and full command output
   --json-out PATH        Write merged JSON results to file
 
@@ -271,6 +275,7 @@ Environment variables:
   SPECBANDIT_KEY_TTL          Key TTL in seconds (default: 21600)
   SPECBANDIT_KEY_RERUN        Per-runner rerun key
   SPECBANDIT_KEY_RERUN_TTL    Rerun key TTL in seconds (default: 604800)
+  SPECBANDIT_RERUN            Safety flag for reruns (1/true/yes)
   SPECBANDIT_VERBOSE          Enable verbose output (1/true/yes)
 
 File input priority for push:

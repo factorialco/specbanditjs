@@ -565,6 +565,82 @@ describe('Worker adapter lifecycle', () => {
     expect(adapter.teardown).toHaveBeenCalledOnce()
   })
 
+  describe('rerun safety flag', () => {
+    const keyRerun = 'pr-123-run-456-runner-3'
+
+    it('exits 1 with error when rerun=true and rerun key is empty', async () => {
+      queue.readAll.mockResolvedValue([])
+      const adapter = createMockAdapter()
+
+      const worker = new Worker({
+        key,
+        adapter,
+        batchSize: 2,
+        keyRerun,
+        keyRerunTtl: 604_800,
+        rerun: true,
+        queue: queue as unknown as RedisQueue,
+        output: capture.stream,
+      })
+
+      const exitCode = await worker.run()
+
+      expect(exitCode).toBe(1)
+      expect(capture.getOutput()).toContain('ERROR: --rerun flag is set but rerun key')
+      expect(capture.getOutput()).toContain(keyRerun)
+      expect(capture.getOutput()).toContain('Cannot replay')
+      expect(queue.steal).not.toHaveBeenCalled()
+      expect(adapter.runBatch).not.toHaveBeenCalled()
+    })
+
+    it('replays normally when rerun=true and rerun key has data', async () => {
+      queue.readAll.mockResolvedValue(['test/x.test.ts', 'test/y.test.ts'])
+      const adapter = createMockAdapter()
+
+      const worker = new Worker({
+        key,
+        adapter,
+        batchSize: 2,
+        keyRerun,
+        keyRerunTtl: 604_800,
+        rerun: true,
+        queue: queue as unknown as RedisQueue,
+        output: capture.stream,
+      })
+
+      const exitCode = await worker.run()
+
+      expect(exitCode).toBe(0)
+      expect(capture.getOutput()).toContain('Replay mode: found 2 files')
+      expect(queue.steal).not.toHaveBeenCalled()
+    })
+
+    it('falls through to record mode when rerun=false and rerun key is empty', async () => {
+      queue.readAll.mockResolvedValue([])
+      queue.steal
+        .mockResolvedValueOnce(['test/a.test.ts'])
+        .mockResolvedValueOnce([])
+      const adapter = createMockAdapter()
+
+      const worker = new Worker({
+        key,
+        adapter,
+        batchSize: 2,
+        keyRerun,
+        keyRerunTtl: 604_800,
+        rerun: false,
+        queue: queue as unknown as RedisQueue,
+        output: capture.stream,
+      })
+
+      const exitCode = await worker.run()
+
+      expect(exitCode).toBe(0)
+      expect(capture.getOutput()).toContain('Record mode')
+      expect(queue.steal).toHaveBeenCalled()
+    })
+  })
+
   it('spawnSync is never called when using a custom adapter', async () => {
     const adapter = createMockAdapter()
     queue.steal

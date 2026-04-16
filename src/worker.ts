@@ -10,6 +10,7 @@ export interface WorkerOptions {
   batchSize?: number
   keyRerun?: string | null
   keyRerunTtl?: number
+  rerun?: boolean
   verbose?: boolean
   queue?: RedisQueue
   output?: NodeJS.WritableStream
@@ -27,6 +28,7 @@ export interface WorkerOptionsLegacy {
   batchSize?: number
   keyRerun?: string | null
   keyRerunTtl?: number
+  rerun?: boolean
   verbose?: boolean
   queue?: RedisQueue
   output?: NodeJS.WritableStream
@@ -40,6 +42,7 @@ export class Worker {
   readonly batchSize: number
   readonly keyRerun: string | null
   readonly keyRerunTtl: number
+  readonly rerun: boolean
   readonly verbose: boolean
   readonly output: NodeJS.WritableStream
   readonly jsonOut: string | null
@@ -51,6 +54,7 @@ export class Worker {
     this.batchSize = options.batchSize ?? 5
     this.keyRerun = options.keyRerun ?? null
     this.keyRerunTtl = options.keyRerunTtl ?? 604_800
+    this.rerun = options.rerun ?? false
     this.verbose = options.verbose ?? false
     this.queue = options.queue ?? new RedisQueue()
     this.output = options.output ?? process.stdout
@@ -84,6 +88,9 @@ export class Worker {
         const rerunFiles = await this.queue.readAll(this.keyRerun)
         if (rerunFiles.length > 0) {
           exitCode = await this.runReplay(rerunFiles)
+        } else if (this.rerun) {
+          this.log(`ERROR: --rerun flag is set but rerun key '${this.keyRerun}' is empty. The rerun key may have expired (TTL) or Redis was flushed. Cannot replay — failing to prevent silent false pass.`)
+          return 1
         } else {
           exitCode = await this.runSteal(true)
         }

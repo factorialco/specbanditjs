@@ -84,6 +84,7 @@ specbandit work [options]
   --redis-url URL        Redis URL (default: redis://localhost:6379)
   --key-rerun KEY        Per-runner rerun key for re-run support (see below)
   --key-rerun-ttl SECS   TTL for rerun key (default: 604800 / 1 week)
+  --rerun                Safety flag: fail if rerun key is empty (prevents silent false passes)
   --verbose              Show per-batch file list and full command output
   --json-out PATH        Write merged JSON results to file
 ```
@@ -102,6 +103,7 @@ All CLI options can be set via environment variables:
 | `SPECBANDIT_KEY_TTL` | Key expiry in seconds | `21600` (6 hours) |
 | `SPECBANDIT_KEY_RERUN` | Per-runner rerun key | *(none)* |
 | `SPECBANDIT_KEY_RERUN_TTL` | Rerun key expiry in seconds | `604800` (1 week) |
+| `SPECBANDIT_RERUN` | Safety flag for reruns (1/true/yes) | `false` |
 | `SPECBANDIT_VERBOSE` | Enable verbose output (1/true/yes) | `false` |
 
 CLI flags take precedence over environment variables.
@@ -184,17 +186,39 @@ The `--key-rerun` flag gives each matrix runner its own "memory" in Redis. It en
 specbandit work \
   --key "pr-42-run-100" \
   --key-rerun "pr-42-run-100-runner-3" \
-  --command "npx jest" \
-  --batch-size 10
+            --command "npx jest" \
+            --batch-size 10
+```
+
+### Using `--rerun` to prevent silent false passes
+
+If the rerun key expires (TTL) or Redis is flushed between the first run and a re-run, the worker would enter record mode, find an empty shared queue, run zero tests, and exit 0 -- a silent false pass. The `--rerun` flag prevents this by failing immediately when the rerun key is empty.
+
+Use `github.run_attempt` to automatically set `--rerun` only on re-runs:
+
+```yaml
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci
+      - run: |
+          npx specbandit work \
+            --key "pr-${{ github.event.number }}-${{ github.run_id }}" \
+            --key-rerun "pr-${{ github.event.number }}-${{ github.run_id }}-runner-${{ matrix.runner }}" \
+            --redis-url "${{ secrets.REDIS_URL }}" \
+            --command "npx jest" \
+            --batch-size 10
+        env:
+          SPECBANDIT_RERUN: ${{ github.run_attempt != '1' && '1' || '' }}
 ```
 
 ### How it works: three operating modes
 
-| `--key-rerun` provided? | Rerun key in Redis | Mode | Behavior |
-|--------------------------|-------------------|------|----------|
-| No | -- | **Steal** | Original behavior. Steal from shared queue, run, done. |
-| Yes | Empty | **Record** | Steal from shared queue + record each batch to the rerun key. |
-| Yes | Has data | **Replay** | Ignore shared queue entirely. Re-run exactly the recorded files. |
+| `--key-rerun` provided? | Rerun key in Redis | `--rerun` | Mode | Behavior |
+|--------------------------|-------------------|-----------|------|----------|
+| No | -- | -- | **Steal** | Original behavior. Steal from shared queue, run, done. |
+| Yes | Empty | No | **Record** | Steal from shared queue + record each batch to the rerun key. |
+| Yes | Empty | Yes | **Fail** | Exit 1 immediately. Prevents silent false passes when rerun key expired. |
+| Yes | Has data | -- | **Replay** | Ignore shared queue entirely. Re-run exactly the recorded files. |
 
 ### Complete GitHub Actions example with re-run support
 
