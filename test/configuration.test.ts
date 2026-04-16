@@ -13,6 +13,7 @@ describe('Configuration', () => {
     'SPECBANDIT_KEY_RERUN',
     'SPECBANDIT_KEY_RERUN_TTL',
     'SPECBANDIT_VERBOSE',
+    'SPECBANDIT_RERUN',
   ]
   let savedEnv: Record<string, string | undefined>
 
@@ -79,6 +80,11 @@ describe('Configuration', () => {
       const config = new Configuration()
       expect(config.verbose).toBe(false)
     })
+
+    it('has rerun false by default', () => {
+      const config = new Configuration()
+      expect(config.rerun).toBe(false)
+    })
   })
 
   describe('environment variable overrides', () => {
@@ -143,6 +149,20 @@ describe('Configuration', () => {
         expect(config.verbose).toBe(true)
       }
     })
+
+    it('reads rerun from SPECBANDIT_RERUN', () => {
+      process.env.SPECBANDIT_RERUN = '1'
+      const config = new Configuration()
+      expect(config.rerun).toBe(true)
+    })
+
+    it('accepts 1/yes/true for rerun', () => {
+      for (const val of ['1', 'yes', 'true', 'TRUE', 'Yes']) {
+        process.env.SPECBANDIT_RERUN = val
+        const config = new Configuration()
+        expect(config.rerun).toBe(true)
+      }
+    })
   })
 
   describe('constructor options override env vars', () => {
@@ -187,6 +207,16 @@ describe('Configuration', () => {
     it('throws when key_rerun_ttl is not positive', () => {
       const config = new Configuration({ key: 'valid-key', keyRerunTtl: 0 })
       expect(() => config.validate()).toThrow(/key_rerun_ttl must be a positive integer/)
+    })
+
+    it('throws when rerun is true but keyRerun is not set', () => {
+      const config = new Configuration({ key: 'valid-key', rerun: true })
+      expect(() => config.validate()).toThrow(/--rerun requires --key-rerun/)
+    })
+
+    it('passes when rerun is true and keyRerun is set', () => {
+      const config = new Configuration({ key: 'valid-key', rerun: true, keyRerun: 'some-key' })
+      expect(() => config.validate()).not.toThrow()
     })
 
     it('passes when key and batch_size are valid', () => {

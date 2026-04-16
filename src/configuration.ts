@@ -16,6 +16,7 @@ export interface ConfigurationOptions {
   keyTtl?: number
   keyRerun?: string | null
   keyRerunTtl?: number
+  rerun?: boolean
   verbose?: boolean
 }
 
@@ -43,6 +44,7 @@ export class Configuration {
   keyTtl: number
   keyRerun: string | null
   keyRerunTtl: number
+  rerun: boolean
   verbose: boolean
 
   constructor(options: ConfigurationOptions = {}) {
@@ -54,6 +56,7 @@ export class Configuration {
     this.keyTtl = options.keyTtl ?? parseInt(process.env.SPECBANDIT_KEY_TTL ?? String(DEFAULT_KEY_TTL), 10)
     this.keyRerun = options.keyRerun ?? process.env.SPECBANDIT_KEY_RERUN ?? null
     this.keyRerunTtl = options.keyRerunTtl ?? parseInt(process.env.SPECBANDIT_KEY_RERUN_TTL ?? String(DEFAULT_KEY_RERUN_TTL), 10)
+    this.rerun = options.rerun ?? envTruthy('SPECBANDIT_RERUN')
     this.verbose = options.verbose ?? envTruthy('SPECBANDIT_VERBOSE')
   }
 
@@ -69,6 +72,9 @@ export class Configuration {
     }
     if (!Number.isInteger(this.keyRerunTtl) || this.keyRerunTtl <= 0) {
       throw new SpecbanditError('key_rerun_ttl must be a positive integer')
+    }
+    if (this.rerun && !this.keyRerun) {
+      throw new SpecbanditError('--rerun requires --key-rerun to be set')
     }
   }
 
