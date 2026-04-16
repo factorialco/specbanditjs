@@ -1,6 +1,6 @@
 {
   "name": "@factorialco/specbandit",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "Distributed test runner using Redis as a work queue. Push file paths to a Redis list, then multiple CI runners atomically steal batches and execute them via a configurable command.",
   "author": "Ferran Basora",
   "license": "MIT",
