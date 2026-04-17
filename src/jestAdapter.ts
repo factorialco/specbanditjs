@@ -345,6 +345,18 @@ export class JestAdapter implements Adapter {
       // Resolver cache clearing is optional
     }
 
+    // Force garbage collection between batches when --expose-gc is enabled.
+    // Without this, V8 lazily expands the heap up to --max-old-space-size before
+    // collecting, which can cause OOM in long-running in-process Jest sessions
+    // even when the actual live set is well within limits.
+    if (typeof global.gc === 'function') {
+      global.gc()
+      const mem = process.memoryUsage()
+      this.log(
+        `[specbandit:jest] Post-GC heap: ${(mem.heapUsed / 1024 / 1024).toFixed(0)} MB used / ${(mem.heapTotal / 1024 / 1024).toFixed(0)} MB total`
+      )
+    }
+
     const duration = (performance.now() - startTime) / 1000
 
     return { batchNum, files, exitCode, duration }
