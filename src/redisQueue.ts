@@ -1,5 +1,8 @@
 import Redis from 'ioredis'
 
+const MAX_RETRIES = 3
+const BASE_DELAY_MS = 1000
+
 export class RedisQueue {
   readonly redis: Redis
 
@@ -17,11 +20,13 @@ export class RedisQueue {
   async push(key: string, files: string[], ttl?: number): Promise<number> {
     if (files.length === 0) return 0
 
-    const count = await this.redis.rpush(key, ...files)
-    if (ttl != null) {
-      await this.redis.expire(key, ttl)
-    }
-    return count
+    return this.withRetries('push', async () => {
+      const count = await this.redis.rpush(key, ...files)
+      if (ttl != null) {
+        await this.redis.expire(key, ttl)
+      }
+      return count
+    })
   }
 
   /**
@@ -31,19 +36,22 @@ export class RedisQueue {
    * Uses LPOP with count argument (Redis 6.2+).
    */
   async steal(key: string, count: number): Promise<string[]> {
-    // ioredis lpop with count: use call() for the raw LPOP key count form
-    const result = await this.redis.call('LPOP', key, String(count)) as string[] | string | null
+    return this.withRetries('steal', async () => {
+      const result = await this.redis.call('LPOP', key, String(count)) as string[] | string | null
 
-    if (result === null || result === undefined) return []
-    if (typeof result === 'string') return [result]
-    return Array.isArray(result) ? result : []
+      if (result === null || result === undefined) return []
+      if (typeof result === 'string') return [result]
+      return Array.isArray(result) ? result : []
+    })
   }
 
   /**
    * Returns the current length of the queue.
    */
   async length(key: string): Promise<number> {
-    return this.redis.llen(key)
+    return this.withRetries('length', async () => {
+      return this.redis.llen(key)
+    })
   }
 
   /**
@@ -51,10 +59,27 @@ export class RedisQueue {
    * Returns an array of file paths (empty array when key doesn't exist).
    */
   async readAll(key: string): Promise<string[]> {
-    return this.redis.lrange(key, 0, -1)
+    return this.withRetries('readAll', async () => {
+      return this.redis.lrange(key, 0, -1)
+    })
   }
 
   async close(): Promise<void> {
     await this.redis.quit()
+  }
+
+  private async withRetries<T>(operation: string, fn: () => Promise<T>): Promise<T> {
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        return await fn()
+      } catch (error) {
+        if (attempt === MAX_RETRIES) throw error
+        const delay = BASE_DELAY_MS * Math.pow(2, attempt - 1)
+        console.warn(`[specbandit] Redis ${operation} failed (attempt ${attempt}/${MAX_RETRIES}), retrying in ${delay}ms: ${error}`)
+        await new Promise(resolve => setTimeout(resolve, delay))
+      }
+    }
+    // Unreachable, but TypeScript needs it
+    throw new Error('Unreachable')
   }
 }

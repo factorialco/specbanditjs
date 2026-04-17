@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { RedisQueue } from '../src/redisQueue.js'
 
 describe('RedisQueue', () => {
@@ -126,6 +126,128 @@ describe('RedisQueue', () => {
 
       const result = await queue.readAll('missing-key')
       expect(result).toEqual([])
+    })
+  })
+
+  describe('retry behavior', () => {
+    beforeEach(() => {
+      vi.useFakeTimers()
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('retries on failure and succeeds on second attempt', async () => {
+      mockRedis.llen
+        .mockRejectedValueOnce(new Error('Connection lost'))
+        .mockResolvedValueOnce(5)
+
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      const promise = queue.length('my-key')
+      await vi.advanceTimersByTimeAsync(1000)
+      const result = await promise
+
+      expect(result).toBe(5)
+      expect(mockRedis.llen).toHaveBeenCalledTimes(2)
+      expect(warnSpy).toHaveBeenCalledTimes(1)
+      expect(warnSpy.mock.calls[0][0]).toMatch(/Redis length failed \(attempt 1\/3\)/)
+
+      warnSpy.mockRestore()
+    })
+
+    it('retries with exponential backoff', async () => {
+      mockRedis.llen
+        .mockRejectedValueOnce(new Error('fail 1'))
+        .mockRejectedValueOnce(new Error('fail 2'))
+        .mockResolvedValueOnce(10)
+
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      const promise = queue.length('my-key')
+      await vi.advanceTimersByTimeAsync(1000) // 1st retry: 1s
+      await vi.advanceTimersByTimeAsync(2000) // 2nd retry: 2s
+      const result = await promise
+
+      expect(result).toBe(10)
+      expect(mockRedis.llen).toHaveBeenCalledTimes(3)
+      expect(warnSpy).toHaveBeenCalledTimes(2)
+
+      warnSpy.mockRestore()
+    })
+
+    it('throws after exhausting all retries', async () => {
+      const error = new Error('persistent failure')
+      mockRedis.llen
+        .mockRejectedValueOnce(error)
+        .mockRejectedValueOnce(error)
+        .mockRejectedValueOnce(error)
+
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      const promise = queue.length('my-key').catch((e: Error) => e)
+      await vi.advanceTimersByTimeAsync(1000)
+      await vi.advanceTimersByTimeAsync(2000)
+
+      const result = await promise
+      expect(result).toBeInstanceOf(Error)
+      expect((result as Error).message).toBe('persistent failure')
+      expect(mockRedis.llen).toHaveBeenCalledTimes(3)
+      expect(warnSpy).toHaveBeenCalledTimes(2)
+
+      warnSpy.mockRestore()
+    })
+
+    it('retries work for push', async () => {
+      mockRedis.rpush
+        .mockRejectedValueOnce(new Error('Connection lost'))
+        .mockResolvedValueOnce(2)
+
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      const promise = queue.push('my-key', ['a', 'b'])
+      await vi.advanceTimersByTimeAsync(1000)
+      const result = await promise
+
+      expect(result).toBe(2)
+      expect(mockRedis.rpush).toHaveBeenCalledTimes(2)
+
+      warnSpy.mockRestore()
+    })
+
+    it('retries work for steal', async () => {
+      mockRedis.call
+        .mockRejectedValueOnce(new Error('Connection lost'))
+        .mockResolvedValueOnce(['a', 'b'])
+
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      const promise = queue.steal('my-key', 2)
+      await vi.advanceTimersByTimeAsync(1000)
+      const result = await promise
+
+      expect(result).toEqual(['a', 'b'])
+      expect(mockRedis.call).toHaveBeenCalledTimes(2)
+
+      warnSpy.mockRestore()
+    })
+
+    it('retries work for readAll', async () => {
+      mockRedis.lrange
+        .mockRejectedValueOnce(new Error('Connection lost'))
+        .mockResolvedValueOnce(['a', 'b'])
+
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      const promise = queue.readAll('my-key')
+      await vi.advanceTimersByTimeAsync(1000)
+      const result = await promise
+
+      expect(result).toEqual(['a', 'b'])
+      expect(mockRedis.lrange).toHaveBeenCalledTimes(2)
+
+      warnSpy.mockRestore()
     })
   })
 
