@@ -351,10 +351,12 @@ export class JestAdapter implements Adapter {
     // even when the actual live set is well within limits.
     if (typeof global.gc === 'function') {
       global.gc()
-      const mem = process.memoryUsage()
-      this.log(
-        `[specbandit:jest] Post-GC heap: ${(mem.heapUsed / 1024 / 1024).toFixed(0)} MB used / ${(mem.heapTotal / 1024 / 1024).toFixed(0)} MB total`
-      )
+      if (this.verbose) {
+        const mem = process.memoryUsage()
+        this.log(
+          `[specbandit:jest] Post-GC heap: ${(mem.heapUsed / 1024 / 1024).toFixed(0)} MB used / ${(mem.heapTotal / 1024 / 1024).toFixed(0)} MB total`
+        )
+      }
     }
 
     const duration = (performance.now() - startTime) / 1000
