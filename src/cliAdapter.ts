@@ -5,8 +5,6 @@ import type { Adapter, BatchResult } from './adapter.js'
 export interface CliAdapterOptions {
   command: string
   commandOpts?: string[]
-  verbose?: boolean
-  output?: NodeJS.WritableStream
 }
 
 /**
@@ -23,14 +21,10 @@ export interface CliAdapterOptions {
 export class CliAdapter implements Adapter {
   readonly command: string
   readonly commandOpts: string[]
-  readonly verbose: boolean
-  readonly output: NodeJS.WritableStream
 
   constructor(options: CliAdapterOptions) {
     this.command = options.command
     this.commandOpts = options.commandOpts ?? []
-    this.verbose = options.verbose ?? false
-    this.output = options.output ?? process.stdout
   }
 
   async setup(): Promise<void> {
@@ -44,21 +38,13 @@ export class CliAdapter implements Adapter {
 
     const startTime = performance.now()
     const result = spawnSync(executable, args, {
-      stdio: this.verbose ? 'inherit' : 'pipe',
+      stdio: 'inherit',
       shell: false,
       env: process.env,
     })
     const duration = (performance.now() - startTime) / 1000
 
     const exitCode = result.status ?? 1
-
-    // If not verbose but command produced stderr on failure, print it
-    if (!this.verbose && exitCode !== 0 && result.stderr) {
-      const stderr = result.stderr.toString()
-      if (stderr.trim()) {
-        this.output.write(stderr + '\n')
-      }
-    }
 
     return { batchNum, files, exitCode, duration }
   }

@@ -67,8 +67,6 @@ export class Worker {
       this.adapter = new CliAdapter({
         command: options.command,
         commandOpts: options.commandOpts,
-        verbose: this.verbose,
-        output: this.output,
       })
     }
   }
@@ -102,7 +100,6 @@ export class Worker {
         this.printSummary()
       }
       this.writeJsonResults()
-      this.writeGitHubStepSummary()
     } finally {
       await this.adapter.teardown()
     }
@@ -270,50 +267,6 @@ export class Worker {
     }
 
     fs.writeFileSync(path, JSON.stringify(merged, null, 2) + '\n')
-  }
-
-  private writeGitHubStepSummary(): void {
-    const path = process.env.GITHUB_STEP_SUMMARY
-    if (!path || this.batchResults.length === 0) return
-
-    try {
-      const durations = this.batchResults.map((r) => r.duration)
-      const totalFiles = this.batchResults.reduce((sum, r) => sum + r.files.length, 0)
-      const failedBatches = this.batchResults.filter((r) => r.exitCode !== 0)
-      const minDuration = Math.min(...durations)
-      const maxDuration = Math.max(...durations)
-      const avgDuration = durations.reduce((a, b) => a + b, 0) / durations.length
-
-      const lines: string[] = []
-      lines.push('### Specbandit Results')
-      lines.push('')
-      lines.push('| Metric | Value |')
-      lines.push('|--------|-------|')
-      lines.push(`| Batches | ${this.batchResults.length} |`)
-      lines.push(`| Files | ${totalFiles} |`)
-      lines.push(`| Failed batches | ${failedBatches.length} |`)
-      lines.push(`| Batch time (min) | ${minDuration.toFixed(1)}s |`)
-      lines.push(`| Batch time (avg) | ${avgDuration.toFixed(1)}s |`)
-      lines.push(`| Batch time (max) | ${maxDuration.toFixed(1)}s |`)
-      lines.push('')
-
-      if (failedBatches.length > 0) {
-        lines.push(`<details><summary>${failedBatches.length} failed batches</summary>`)
-        lines.push('')
-        lines.push('| Batch | Exit Code | Files |')
-        lines.push('|-------|-----------|-------|')
-        for (const batch of failedBatches) {
-          const filesStr = batch.files.map((f) => `\`${f}\``).join(', ')
-          lines.push(`| #${batch.batchNum} | ${batch.exitCode} | ${filesStr} |`)
-        }
-        lines.push('')
-        lines.push('</details>')
-      }
-
-      fs.appendFileSync(path, lines.join('\n') + '\n')
-    } catch {
-      // Never fail the build because of summary writing
-    }
   }
 
   private log(message: string): void {

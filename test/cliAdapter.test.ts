@@ -1,22 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { CliAdapter } from '../src/cliAdapter.js'
 import * as childProcess from 'node:child_process'
-import { Writable } from 'node:stream'
 
 vi.mock('node:child_process', () => ({
   spawnSync: vi.fn().mockReturnValue({ status: 0, stdout: Buffer.from(''), stderr: Buffer.from('') }),
 }))
-
-function createOutputCapture(): { stream: Writable; getOutput: () => string } {
-  const chunks: string[] = []
-  const stream = new Writable({
-    write(chunk, _encoding, callback) {
-      chunks.push(chunk.toString())
-      callback()
-    },
-  })
-  return { stream, getOutput: () => chunks.join('') }
-}
 
 describe('CliAdapter', () => {
   beforeEach(() => {
@@ -95,43 +83,14 @@ describe('CliAdapter', () => {
       expect(result.exitCode).toBe(1)
     })
 
-    it('prints stderr on failure when not verbose', async () => {
-      vi.mocked(childProcess.spawnSync).mockReturnValueOnce({
-        status: 1,
-        stdout: Buffer.from(''),
-        stderr: Buffer.from('Some error occurred'),
-      } as any)
-
-      const capture = createOutputCapture()
-      const adapter = new CliAdapter({
-        command: 'node',
-        verbose: false,
-        output: capture.stream,
-      })
-      await adapter.runBatch(['test.ts'], 1)
-
-      expect(capture.getOutput()).toContain('Some error occurred')
-    })
-
-    it('uses inherit stdio when verbose', async () => {
-      const adapter = new CliAdapter({ command: 'node', verbose: true })
+    it('always uses inherit stdio', async () => {
+      const adapter = new CliAdapter({ command: 'node' })
       await adapter.runBatch(['test.ts'], 1)
 
       expect(childProcess.spawnSync).toHaveBeenCalledWith(
         'node',
         ['test.ts'],
         expect.objectContaining({ stdio: 'inherit' }),
-      )
-    })
-
-    it('uses pipe stdio when not verbose', async () => {
-      const adapter = new CliAdapter({ command: 'node', verbose: false })
-      await adapter.runBatch(['test.ts'], 1)
-
-      expect(childProcess.spawnSync).toHaveBeenCalledWith(
-        'node',
-        ['test.ts'],
-        expect.objectContaining({ stdio: 'pipe' }),
       )
     })
   })
