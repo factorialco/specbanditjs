@@ -130,7 +130,6 @@ function buildAdapter(flags: Record<string, string>, config: Configuration): Ada
       return new CliAdapter({
         command: config.command,
         commandOpts: config.commandOpts,
-        verbose: config.verbose,
       })
 
     default:

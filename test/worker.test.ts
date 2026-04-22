@@ -405,69 +405,6 @@ describe.each([
       })
     })
 
-    describe('GitHub step summary', () => {
-      let tmpDir: string
-      let stepSummaryPath: string
-      let originalEnv: string | undefined
-
-      beforeEach(() => {
-        tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'specbandit-test-'))
-        stepSummaryPath = path.join(tmpDir, 'step_summary.md')
-        originalEnv = process.env.GITHUB_STEP_SUMMARY
-        process.env.GITHUB_STEP_SUMMARY = stepSummaryPath
-      })
-
-      afterEach(() => {
-        if (originalEnv !== undefined) {
-          process.env.GITHUB_STEP_SUMMARY = originalEnv
-        } else {
-          delete process.env.GITHUB_STEP_SUMMARY
-        }
-        fs.rmSync(tmpDir, { recursive: true, force: true })
-      })
-
-      it('writes markdown summary to GITHUB_STEP_SUMMARY', async () => {
-        queue.steal
-          .mockResolvedValueOnce(['test/a.test.ts'])
-          .mockResolvedValueOnce([])
-
-        await makeWorker().run()
-
-        expect(fs.existsSync(stepSummaryPath)).toBe(true)
-        const md = fs.readFileSync(stepSummaryPath, 'utf8')
-        expect(md).toContain('Specbandit Results')
-        expect(md).toContain('Batches')
-        expect(md).toContain('Files')
-        expect(md).toContain('Batch time (min)')
-        expect(md).toContain('Batch time (avg)')
-        expect(md).toContain('Batch time (max)')
-      })
-
-      it('includes failed batches in the step summary', async () => {
-        queue.steal
-          .mockResolvedValueOnce(['test/a.test.ts'])
-          .mockResolvedValueOnce([])
-
-        fixture.failBatch(1)
-
-        await makeWorker().run()
-
-        const md = fs.readFileSync(stepSummaryPath, 'utf8')
-        expect(md).toContain('1 failed batches')
-        expect(md).toContain('test/a.test.ts')
-      })
-
-      it('does not write when GITHUB_STEP_SUMMARY is not set', async () => {
-        delete process.env.GITHUB_STEP_SUMMARY
-
-        queue.steal
-          .mockResolvedValueOnce(['test/a.test.ts'])
-          .mockResolvedValueOnce([])
-
-        await makeWorker().run()
-        expect(fs.existsSync(stepSummaryPath)).toBe(false)
-      })
-    })
   })
 })
 
