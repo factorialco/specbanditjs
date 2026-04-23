@@ -157,6 +157,8 @@ Options:
   --redis-url URL        Redis URL (default: redis://localhost:6379)
   --key-rerun KEY        Per-runner rerun key for re-run support
    --key-rerun-ttl SECS   TTL for rerun key (default: 604800 / 1 week)
+  --key-failed KEY       Redis key to store failed test file paths for later review
+  --key-failed-ttl SECS  TTL for failed key (default: 604800 / 1 week)
   --rerun                Safety flag: fail if rerun key is empty (prevents silent false passes)
   --verbose              Show per-batch file list and full command output
   --json-out PATH        Write merged JSON results to file
@@ -190,6 +192,8 @@ Adapters:
     redisUrl: flags['redis-url'],
     keyRerun: flags['key-rerun'],
     keyRerunTtl: flags['key-rerun-ttl'] ? parseInt(flags['key-rerun-ttl'], 10) : undefined,
+    keyFailed: flags['key-failed'],
+    keyFailedTtl: flags['key-failed-ttl'] ? parseInt(flags['key-failed-ttl'], 10) : undefined,
     rerun: flags.rerun === 'true' ? true : undefined,
     verbose: flags.verbose === 'true' ? true : undefined,
   })
@@ -213,6 +217,8 @@ Adapters:
       batchSize: config.batchSize,
       keyRerun: config.keyRerun,
       keyRerunTtl: config.keyRerunTtl,
+      keyFailed: config.keyFailed,
+      keyFailedTtl: config.keyFailedTtl,
       rerun: config.rerun,
       verbose: config.verbose,
       queue,
@@ -252,6 +258,8 @@ Work options:
   --redis-url URL        Redis URL (default: redis://localhost:6379)
   --key-rerun KEY        Per-runner rerun key for re-run support
   --key-rerun-ttl N      TTL for rerun key (default: 604800 / 1 week)
+  --key-failed KEY       Redis key to store failed test file paths for later review
+  --key-failed-ttl N     TTL for failed key (default: 604800 / 1 week)
   --rerun                Safety flag: fail if rerun key is empty
   --verbose              Show per-batch file list and full command output
   --json-out PATH        Write merged JSON results to file
@@ -274,6 +282,8 @@ Environment variables:
   SPECBANDIT_KEY_TTL          Key TTL in seconds (default: 21600)
   SPECBANDIT_KEY_RERUN        Per-runner rerun key
   SPECBANDIT_KEY_RERUN_TTL    Rerun key TTL in seconds (default: 604800)
+  SPECBANDIT_KEY_FAILED       Redis key for failed test files
+  SPECBANDIT_KEY_FAILED_TTL   Failed key TTL in seconds (default: 604800)
   SPECBANDIT_RERUN            Safety flag for reruns (1/true/yes)
   SPECBANDIT_VERBOSE          Enable verbose output (1/true/yes)
 

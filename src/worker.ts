@@ -10,6 +10,8 @@ export interface WorkerOptions {
   batchSize?: number
   keyRerun?: string | null
   keyRerunTtl?: number
+  keyFailed?: string | null
+  keyFailedTtl?: number
   rerun?: boolean
   verbose?: boolean
   queue?: RedisQueue
@@ -28,6 +30,8 @@ export interface WorkerOptionsLegacy {
   batchSize?: number
   keyRerun?: string | null
   keyRerunTtl?: number
+  keyFailed?: string | null
+  keyFailedTtl?: number
   rerun?: boolean
   verbose?: boolean
   queue?: RedisQueue
@@ -42,6 +46,8 @@ export class Worker {
   readonly batchSize: number
   readonly keyRerun: string | null
   readonly keyRerunTtl: number
+  readonly keyFailed: string | null
+  readonly keyFailedTtl: number
   readonly rerun: boolean
   readonly verbose: boolean
   readonly output: NodeJS.WritableStream
@@ -54,6 +60,8 @@ export class Worker {
     this.batchSize = options.batchSize ?? 5
     this.keyRerun = options.keyRerun ?? null
     this.keyRerunTtl = options.keyRerunTtl ?? 604_800
+    this.keyFailed = options.keyFailed ?? null
+    this.keyFailedTtl = options.keyFailedTtl ?? 604_800
     this.rerun = options.rerun ?? false
     this.verbose = options.verbose ?? false
     this.queue = options.queue ?? new RedisQueue()
@@ -133,6 +141,7 @@ export class Worker {
       if (result.exitCode !== 0) {
         this.log(`[specbandit] Batch #${batchNum} FAILED (exit code: ${result.exitCode})`)
         failed = true
+        await this.recordFailed(result.files)
       } else {
         this.log(`[specbandit] Batch #${batchNum} passed.`)
       }
@@ -185,6 +194,7 @@ export class Worker {
       if (result.exitCode !== 0) {
         this.log(`[specbandit] Batch #${batchNum} FAILED (exit code: ${result.exitCode})`)
         failed = true
+        await this.recordFailed(result.files)
       } else {
         this.log(`[specbandit] Batch #${batchNum} passed.`)
       }
@@ -202,6 +212,12 @@ export class Worker {
   }
 
   // --- Reporting helpers ---
+
+  private async recordFailed(files: string[]): Promise<void> {
+    if (this.keyFailed) {
+      await this.queue.push(this.keyFailed, files, this.keyFailedTtl)
+    }
+  }
 
   private printSummary(): void {
     const durations = this.batchResults.map((r) => r.duration)
