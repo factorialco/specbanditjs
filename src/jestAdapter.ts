@@ -311,8 +311,8 @@ export class JestAdapter implements Adapter {
       if (!result.success) {
         exitCode = 1
         failedFiles = result.testResults
-          .filter((r: any) => r.numFailingTests > 0)
-          .map((r: any) => r.testFilePath)
+          .filter((r) => r.numFailingTests > 0)
+          .map((r) => r.testFilePath)
         if (this.verbose) {
           for (const testResult of result.testResults) {
             if (testResult.numFailingTests > 0 && testResult.failureMessage) {
