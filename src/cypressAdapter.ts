@@ -111,6 +111,7 @@ export class CypressAdapter implements Adapter {
     const spec = files.join(',')
     const startTime = performance.now()
     let exitCode = 0
+    let failedFiles: string[] | undefined
 
     try {
       const runOptions: CypressRunOptions = {
@@ -136,6 +137,10 @@ export class CypressAdapter implements Adapter {
         this.log(`[specbandit:cypress] Batch #${batchNum} failed to start: ${result.message}`)
       } else if (result.totalFailed > 0) {
         exitCode = 1
+        failedFiles = (result.runs ?? [])
+          .filter((run) => (run.stats?.failures ?? 0) > 0)
+          .map((run) => run.spec?.relative ?? run.spec?.name ?? '')
+          .filter((f) => f !== '')
         if (this.verbose) {
           for (const run of result.runs ?? []) {
             if ((run.stats?.failures ?? 0) > 0) {
@@ -152,7 +157,7 @@ export class CypressAdapter implements Adapter {
 
     const duration = (performance.now() - startTime) / 1000
 
-    return { batchNum, files, exitCode, duration }
+    return { batchNum, files, exitCode, duration, failedFiles }
   }
 
   async teardown(): Promise<void> {

@@ -252,6 +252,7 @@ export class JestAdapter implements Adapter {
 
     const startTime = performance.now()
     let exitCode = 0
+    let failedFiles: string[] | undefined
 
     // Intercept process.exit for this batch only.
     // Jest's `exit` npm package (used in runJest.js) replaces stdout/stderr
@@ -309,6 +310,9 @@ export class JestAdapter implements Adapter {
 
       if (!result.success) {
         exitCode = 1
+        failedFiles = result.testResults
+          .filter((r) => r.numFailingTests > 0)
+          .map((r) => r.testFilePath)
         if (this.verbose) {
           for (const testResult of result.testResults) {
             if (testResult.numFailingTests > 0 && testResult.failureMessage) {
@@ -347,7 +351,7 @@ export class JestAdapter implements Adapter {
 
     const duration = (performance.now() - startTime) / 1000
 
-    return { batchNum, files, exitCode, duration }
+    return { batchNum, files, exitCode, duration, failedFiles }
   }
 
   async teardown(): Promise<void> {

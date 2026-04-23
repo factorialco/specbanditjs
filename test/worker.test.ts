@@ -227,6 +227,92 @@ describe.each([
     })
   })
 
+  // ── Failed key mode ───────────────────────────────────────────────────
+
+  describe('key-failed (recording failed test files)', () => {
+    const keyFailed = 'pr-123-failed'
+
+    it('pushes failed batch files to the failed key', async () => {
+      queue.steal
+        .mockResolvedValueOnce(['test/a.test.ts', 'test/b.test.ts'])
+        .mockResolvedValueOnce(['test/c.test.ts'])
+        .mockResolvedValueOnce([])
+
+      fixture.failBatch(1)
+
+      const exitCode = await makeWorker({ keyFailed, keyFailedTtl: 3600 }).run()
+
+      expect(exitCode).toBe(1)
+      expect(queue.push).toHaveBeenCalledWith(keyFailed, ['test/a.test.ts', 'test/b.test.ts'], 3600)
+      // Batch 2 passed, so should NOT be pushed to failed key
+      expect(queue.push).toHaveBeenCalledTimes(1)
+    })
+
+    it('pushes multiple failed batches to the failed key', async () => {
+      queue.steal
+        .mockResolvedValueOnce(['test/a.test.ts'])
+        .mockResolvedValueOnce(['test/b.test.ts'])
+        .mockResolvedValueOnce([])
+
+      fixture.failBatch(1, 2)
+
+      await makeWorker({ keyFailed, keyFailedTtl: 3600 }).run()
+
+      expect(queue.push).toHaveBeenCalledWith(keyFailed, ['test/a.test.ts'], 3600)
+      expect(queue.push).toHaveBeenCalledWith(keyFailed, ['test/b.test.ts'], 3600)
+      expect(queue.push).toHaveBeenCalledTimes(2)
+    })
+
+    it('does not push to failed key when all batches pass', async () => {
+      queue.steal
+        .mockResolvedValueOnce(['test/a.test.ts'])
+        .mockResolvedValueOnce([])
+
+      await makeWorker({ keyFailed, keyFailedTtl: 3600 }).run()
+
+      expect(queue.push).not.toHaveBeenCalled()
+    })
+
+    it('does not push to failed key when keyFailed is not set', async () => {
+      queue.steal
+        .mockResolvedValueOnce(['test/a.test.ts'])
+        .mockResolvedValueOnce([])
+
+      fixture.failBatch(1)
+
+      await makeWorker().run()
+
+      expect(queue.push).not.toHaveBeenCalled()
+    })
+
+    it('pushes failed files in replay mode too', async () => {
+      queue.readAll.mockResolvedValue(['test/x.test.ts', 'test/y.test.ts', 'test/z.test.ts'])
+
+      fixture.failBatch(2)
+
+      await makeWorker({ keyFailed, keyFailedTtl: 3600, keyRerun: 'pr-123-rerun' }).run()
+
+      // Batch 2 has 1 file (z.test.ts) with batchSize=2: batch1=[x,y], batch2=[z]
+      expect(queue.push).toHaveBeenCalledWith(keyFailed, ['test/z.test.ts'], 3600)
+    })
+
+    it('works together with keyRerun in record mode', async () => {
+      queue.readAll.mockResolvedValue([]) // empty rerun key → record mode
+      queue.steal
+        .mockResolvedValueOnce(['test/a.test.ts'])
+        .mockResolvedValueOnce([])
+
+      fixture.failBatch(1)
+
+      const keyRerun = 'pr-123-rerun'
+      await makeWorker({ keyFailed, keyFailedTtl: 3600, keyRerun, keyRerunTtl: 604_800 }).run()
+
+      // Should push to both rerun key (record) and failed key
+      expect(queue.push).toHaveBeenCalledWith(keyRerun, ['test/a.test.ts'], 604_800)
+      expect(queue.push).toHaveBeenCalledWith(keyFailed, ['test/a.test.ts'], 3600)
+    })
+  })
+
   // ── Record mode ───────────────────────────────────────────────────────
 
   describe('record mode (key_rerun set, rerun key empty)', () => {

@@ -12,6 +12,8 @@ describe('Configuration', () => {
     'SPECBANDIT_KEY_TTL',
     'SPECBANDIT_KEY_RERUN',
     'SPECBANDIT_KEY_RERUN_TTL',
+    'SPECBANDIT_KEY_FAILED',
+    'SPECBANDIT_KEY_FAILED_TTL',
     'SPECBANDIT_VERBOSE',
     'SPECBANDIT_RERUN',
   ]
@@ -76,6 +78,16 @@ describe('Configuration', () => {
       expect(config.keyRerunTtl).toBe(604_800)
     })
 
+    it('has null key_failed by default', () => {
+      const config = new Configuration()
+      expect(config.keyFailed).toBeNull()
+    })
+
+    it('uses default key_failed_ttl of 1 week', () => {
+      const config = new Configuration()
+      expect(config.keyFailedTtl).toBe(604_800)
+    })
+
     it('has verbose false by default', () => {
       const config = new Configuration()
       expect(config.verbose).toBe(false)
@@ -134,6 +146,18 @@ describe('Configuration', () => {
       process.env.SPECBANDIT_KEY_RERUN_TTL = '86400'
       const config = new Configuration()
       expect(config.keyRerunTtl).toBe(86_400)
+    })
+
+    it('reads key_failed from SPECBANDIT_KEY_FAILED', () => {
+      process.env.SPECBANDIT_KEY_FAILED = 'pr-42-failed'
+      const config = new Configuration()
+      expect(config.keyFailed).toBe('pr-42-failed')
+    })
+
+    it('reads key_failed_ttl from SPECBANDIT_KEY_FAILED_TTL', () => {
+      process.env.SPECBANDIT_KEY_FAILED_TTL = '86400'
+      const config = new Configuration()
+      expect(config.keyFailedTtl).toBe(86_400)
     })
 
     it('reads verbose from SPECBANDIT_VERBOSE', () => {
