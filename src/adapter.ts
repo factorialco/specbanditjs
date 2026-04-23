@@ -10,6 +10,12 @@ export interface BatchResult {
   files: string[]
   exitCode: number
   duration: number
+  /**
+   * When the adapter can determine which individual files failed,
+   * this contains only the failed file paths (a subset of `files`).
+   * When not available (e.g. CLI adapter), the worker falls back to `files`.
+   */
+  failedFiles?: string[]
 }
 
 export interface Adapter {

@@ -141,7 +141,7 @@ export class Worker {
       if (result.exitCode !== 0) {
         this.log(`[specbandit] Batch #${batchNum} FAILED (exit code: ${result.exitCode})`)
         failed = true
-        await this.recordFailed(result.files)
+        await this.recordFailed(result)
       } else {
         this.log(`[specbandit] Batch #${batchNum} passed.`)
       }
@@ -194,7 +194,7 @@ export class Worker {
       if (result.exitCode !== 0) {
         this.log(`[specbandit] Batch #${batchNum} FAILED (exit code: ${result.exitCode})`)
         failed = true
-        await this.recordFailed(result.files)
+        await this.recordFailed(result)
       } else {
         this.log(`[specbandit] Batch #${batchNum} passed.`)
       }
@@ -213,8 +213,9 @@ export class Worker {
 
   // --- Reporting helpers ---
 
-  private async recordFailed(files: string[]): Promise<void> {
+  private async recordFailed(result: BatchResult): Promise<void> {
     if (this.keyFailed) {
+      const files = result.failedFiles ?? result.files
       await this.queue.push(this.keyFailed, files, this.keyFailedTtl)
     }
   }

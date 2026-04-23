@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { Worker } from '../src/worker.js'
 import { CliAdapter } from '../src/cliAdapter.js'
 import { RedisQueue } from '../src/redisQueue.js'
+import type { Adapter, BatchResult } from '../src/adapter.js'
 import { Writable } from 'node:stream'
 
 /**
@@ -234,5 +235,228 @@ describe('E2E: --key-failed', () => {
     await worker.run()
 
     expect(queue.push).toHaveBeenCalledWith(keyFailed, ['spec/a_spec.rb'], 604_800)
+  })
+})
+
+// ────────────────────────────────────────────────────────────────────────────
+// E2E: per-file failedFiles support
+//
+// When an adapter (e.g. Jest, Cypress) can report which individual files
+// failed within a batch, only those specific files should be pushed to the
+// failed key — not the entire batch.
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('E2E: --key-failed with per-file failedFiles', () => {
+  let queue: ReturnType<typeof createMockQueue> & {
+    push: ReturnType<typeof vi.fn>
+    steal: ReturnType<typeof vi.fn>
+    readAll: ReturnType<typeof vi.fn>
+  }
+  let capture: ReturnType<typeof createOutputCapture>
+  const key = 'e2e-run-456'
+  const keyFailed = 'e2e-run-456-failed'
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    queue = createMockQueue() as any
+    capture = createOutputCapture()
+  })
+
+  /**
+   * Creates a mock adapter that simulates per-file failure reporting
+   * (like Jest or Cypress adapters). The failedFilesByBatch map specifies
+   * which files fail in each batch (1-indexed).
+   */
+  function createPerFileAdapter(failedFilesByBatch: Record<number, string[]>): Adapter {
+    return {
+      setup: vi.fn().mockResolvedValue(undefined),
+      runBatch: vi.fn().mockImplementation(
+        async (files: string[], batchNum: number): Promise<BatchResult> => {
+          const failedFiles = failedFilesByBatch[batchNum] ?? []
+          const exitCode = failedFiles.length > 0 ? 1 : 0
+          return { batchNum, files, exitCode, duration: 0.1, failedFiles: failedFiles.length > 0 ? failedFiles : undefined }
+        },
+      ),
+      teardown: vi.fn().mockResolvedValue(undefined),
+    }
+  }
+
+  it('records only the individual failed files, not the entire batch', async () => {
+    // Batch of 3 files where only 1 fails
+    const adapter = createPerFileAdapter({
+      1: ['test/models/user.test.ts'], // only user.test.ts fails out of 3
+    })
+
+    queue.steal
+      .mockResolvedValueOnce(['test/models/user.test.ts', 'test/models/post.test.ts', 'test/models/comment.test.ts'])
+      .mockResolvedValueOnce([])
+
+    const worker = new Worker({
+      key,
+      adapter,
+      batchSize: 3,
+      keyFailed,
+      keyFailedTtl: 7200,
+      queue: queue as unknown as RedisQueue,
+      output: capture.stream,
+    })
+
+    const exitCode = await worker.run()
+
+    expect(exitCode).toBe(1)
+    // Only the single failed file is pushed, NOT all 3 batch files
+    expect(queue.push).toHaveBeenCalledTimes(1)
+    expect(queue.push).toHaveBeenCalledWith(keyFailed, ['test/models/user.test.ts'], 7200)
+  })
+
+  it('records multiple failed files from the same batch', async () => {
+    // Batch of 4 files where 2 fail
+    const adapter = createPerFileAdapter({
+      1: ['test/a.test.ts', 'test/c.test.ts'],
+    })
+
+    queue.steal
+      .mockResolvedValueOnce(['test/a.test.ts', 'test/b.test.ts', 'test/c.test.ts', 'test/d.test.ts'])
+      .mockResolvedValueOnce([])
+
+    const worker = new Worker({
+      key,
+      adapter,
+      batchSize: 4,
+      keyFailed,
+      keyFailedTtl: 7200,
+      queue: queue as unknown as RedisQueue,
+      output: capture.stream,
+    })
+
+    const exitCode = await worker.run()
+
+    expect(exitCode).toBe(1)
+    expect(queue.push).toHaveBeenCalledTimes(1)
+    expect(queue.push).toHaveBeenCalledWith(keyFailed, ['test/a.test.ts', 'test/c.test.ts'], 7200)
+  })
+
+  it('records per-file failures across multiple batches', async () => {
+    // Batch 1: 1 of 2 fails. Batch 2: all pass. Batch 3: 2 of 3 fail.
+    const adapter = createPerFileAdapter({
+      1: ['test/a.test.ts'],
+      // batch 2: no failures
+      3: ['test/e.test.ts', 'test/f.test.ts'],
+    })
+
+    queue.steal
+      .mockResolvedValueOnce(['test/a.test.ts', 'test/b.test.ts'])
+      .mockResolvedValueOnce(['test/c.test.ts', 'test/d.test.ts'])
+      .mockResolvedValueOnce(['test/e.test.ts', 'test/f.test.ts', 'test/g.test.ts'])
+      .mockResolvedValueOnce([])
+
+    const worker = new Worker({
+      key,
+      adapter,
+      batchSize: 3,
+      keyFailed,
+      keyFailedTtl: 7200,
+      queue: queue as unknown as RedisQueue,
+      output: capture.stream,
+    })
+
+    const exitCode = await worker.run()
+
+    expect(exitCode).toBe(1)
+    // 2 pushes: batch 1 and batch 3 (batch 2 passed)
+    expect(queue.push).toHaveBeenCalledTimes(2)
+    expect(queue.push).toHaveBeenCalledWith(keyFailed, ['test/a.test.ts'], 7200)
+    expect(queue.push).toHaveBeenCalledWith(keyFailed, ['test/e.test.ts', 'test/f.test.ts'], 7200)
+  })
+
+  it('falls back to all batch files when adapter does not report failedFiles (CLI adapter)', async () => {
+    // Adapter that does NOT set failedFiles (simulates CliAdapter behavior)
+    const adapter: Adapter = {
+      setup: vi.fn().mockResolvedValue(undefined),
+      runBatch: vi.fn().mockImplementation(
+        async (files: string[], batchNum: number): Promise<BatchResult> => ({
+          batchNum, files, exitCode: 1, duration: 0.1,
+          // no failedFiles field
+        }),
+      ),
+      teardown: vi.fn().mockResolvedValue(undefined),
+    }
+
+    queue.steal
+      .mockResolvedValueOnce(['test/a.test.ts', 'test/b.test.ts'])
+      .mockResolvedValueOnce([])
+
+    const worker = new Worker({
+      key,
+      adapter,
+      batchSize: 2,
+      keyFailed,
+      keyFailedTtl: 7200,
+      queue: queue as unknown as RedisQueue,
+      output: capture.stream,
+    })
+
+    const exitCode = await worker.run()
+
+    expect(exitCode).toBe(1)
+    // Falls back to all batch files since failedFiles is undefined
+    expect(queue.push).toHaveBeenCalledWith(keyFailed, ['test/a.test.ts', 'test/b.test.ts'], 7200)
+  })
+
+  it('records per-file failures in replay mode', async () => {
+    const adapter = createPerFileAdapter({
+      1: ['test/b.test.ts'], // only b fails in the replayed batch
+    })
+
+    queue.readAll.mockResolvedValue(['test/a.test.ts', 'test/b.test.ts', 'test/c.test.ts'])
+
+    const worker = new Worker({
+      key,
+      adapter,
+      batchSize: 3,
+      keyRerun: 'e2e-run-456-rerun',
+      keyFailed,
+      keyFailedTtl: 7200,
+      queue: queue as unknown as RedisQueue,
+      output: capture.stream,
+    })
+
+    const exitCode = await worker.run()
+
+    expect(exitCode).toBe(1)
+    expect(capture.getOutput()).toContain('Replay mode')
+    expect(queue.push).toHaveBeenCalledWith(keyFailed, ['test/b.test.ts'], 7200)
+  })
+
+  it('does not record when failedFiles is an empty array', async () => {
+    // Edge case: exitCode=1 but failedFiles is empty (adapter bug or crash)
+    const adapter: Adapter = {
+      setup: vi.fn().mockResolvedValue(undefined),
+      runBatch: vi.fn().mockImplementation(
+        async (files: string[], batchNum: number): Promise<BatchResult> => ({
+          batchNum, files, exitCode: 1, duration: 0.1, failedFiles: [],
+        }),
+      ),
+      teardown: vi.fn().mockResolvedValue(undefined),
+    }
+
+    queue.steal
+      .mockResolvedValueOnce(['test/a.test.ts'])
+      .mockResolvedValueOnce([])
+
+    const worker = new Worker({
+      key,
+      adapter,
+      batchSize: 2,
+      keyFailed,
+      keyFailedTtl: 7200,
+      queue: queue as unknown as RedisQueue,
+      output: capture.stream,
+    })
+
+    await worker.run()
+
+    // failedFiles is empty → push is called with empty array, RedisQueue.push handles it (returns 0)
+    expect(queue.push).toHaveBeenCalledWith(keyFailed, [], 7200)
   })
 })
