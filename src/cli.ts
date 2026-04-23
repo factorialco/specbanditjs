@@ -222,7 +222,7 @@ Adapters:
       rerun: config.rerun,
       verbose: config.verbose,
       queue,
-      report: flags['report'] ?? null,
+      report: flags['report'] ?? process.env.SPECBANDIT_REPORT ?? null,
     })
 
     return await worker.run()
@@ -286,6 +286,7 @@ Environment variables:
   SPECBANDIT_KEY_FAILED_TTL   Failed key TTL in seconds (default: 604800)
   SPECBANDIT_RERUN            Safety flag for reruns (1/true/yes)
   SPECBANDIT_VERBOSE          Enable verbose output (1/true/yes)
+  SPECBANDIT_REPORT           Path to write JSON report file
 
 File input priority for push:
   1. stdin (piped)     echo "test/a.test.ts" | specbandit push --key KEY
