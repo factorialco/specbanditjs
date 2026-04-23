@@ -16,7 +16,7 @@ export interface WorkerOptions {
   verbose?: boolean
   queue?: RedisQueue
   output?: NodeJS.WritableStream
-  jsonOut?: string | null
+  report?: string | null
 }
 
 /**
@@ -36,7 +36,7 @@ export interface WorkerOptionsLegacy {
   verbose?: boolean
   queue?: RedisQueue
   output?: NodeJS.WritableStream
-  jsonOut?: string | null
+  report?: string | null
 }
 
 export class Worker {
@@ -51,9 +51,10 @@ export class Worker {
   readonly rerun: boolean
   readonly verbose: boolean
   readonly output: NodeJS.WritableStream
-  readonly jsonOut: string | null
+  readonly report: string | null
 
   private batchResults: BatchResult[] = []
+  private startTime: number = 0
 
   constructor(options: WorkerOptions | WorkerOptionsLegacy) {
     this.key = options.key
@@ -66,7 +67,7 @@ export class Worker {
     this.verbose = options.verbose ?? false
     this.queue = options.queue ?? new RedisQueue()
     this.output = options.output ?? process.stdout
-    this.jsonOut = options.jsonOut ?? null
+    this.report = options.report ?? null
 
     // Support both new adapter-based and legacy command-based options
     if ('adapter' in options) {
@@ -86,6 +87,7 @@ export class Worker {
    */
   async run(): Promise<number> {
     await this.adapter.setup()
+    this.startTime = Date.now()
 
     let exitCode: number
 
@@ -107,7 +109,7 @@ export class Worker {
       if (this.batchResults.length > 0) {
         this.printSummary()
       }
-      this.writeJsonResults()
+      this.writeReport()
     } finally {
       await this.adapter.teardown()
     }
@@ -252,22 +254,27 @@ export class Worker {
     this.log('')
   }
 
-  private writeJsonResults(): void {
-    const path = this.jsonOut
-    if (!path || this.batchResults.length === 0) return
+  private writeReport(): void {
+    const reportPath = this.report
+    if (!reportPath || this.batchResults.length === 0) return
 
     const durations = this.batchResults.map((r) => r.duration)
     const totalFiles = this.batchResults.reduce((sum, r) => sum + r.files.length, 0)
     const failedBatches = this.batchResults.filter((r) => r.exitCode !== 0)
+    const failedFiles = failedBatches.flatMap((r) => r.failedFiles ?? r.files)
+    const totalWallTime = (Date.now() - this.startTime) / 1000
 
     const merged = {
       specbandit_version: VERSION,
       summary: {
         total_files: totalFiles,
         total_batches: this.batchResults.length,
+        passed_batches: this.batchResults.length - failedBatches.length,
         failed_batches: failedBatches.length,
         passed: failedBatches.length === 0,
       },
+      failed_files: failedFiles,
+      total_wall_time: parseFloat(totalWallTime.toFixed(2)),
       batch_timings: {
         count: durations.length,
         min: Math.min(...durations).toFixed(2),
@@ -280,10 +287,11 @@ export class Worker {
         files: r.files,
         exit_code: r.exitCode,
         duration: parseFloat(r.duration.toFixed(2)),
+        passed: r.exitCode === 0,
       })),
     }
 
-    fs.writeFileSync(path, JSON.stringify(merged, null, 2) + '\n')
+    fs.writeFileSync(reportPath, JSON.stringify(merged, null, 2) + '\n')
   }
 
   private log(message: string): void {

@@ -135,11 +135,11 @@ jobs:
 
           mkdir -p tmp/e2e_fail_results
 
-          GITHUB_STEP_SUMMARY= node dist/bin.js work --key "$KEY" --key-rerun "${KEY}-w1" --command /tmp/check.sh --batch-size 1 --verbose --json-out tmp/e2e_fail_results/w1.json > fail-worker-1.log 2>&1 &
+          GITHUB_STEP_SUMMARY= node dist/bin.js work --key "$KEY" --key-rerun "${KEY}-w1" --command /tmp/check.sh --batch-size 1 --verbose --report tmp/e2e_fail_results/w1.json > fail-worker-1.log 2>&1 &
           PID1=$!
-          GITHUB_STEP_SUMMARY= node dist/bin.js work --key "$KEY" --key-rerun "${KEY}-w2" --command /tmp/check.sh --batch-size 1 --verbose --json-out tmp/e2e_fail_results/w2.json > fail-worker-2.log 2>&1 &
+          GITHUB_STEP_SUMMARY= node dist/bin.js work --key "$KEY" --key-rerun "${KEY}-w2" --command /tmp/check.sh --batch-size 1 --verbose --report tmp/e2e_fail_results/w2.json > fail-worker-2.log 2>&1 &
           PID2=$!
-          GITHUB_STEP_SUMMARY= node dist/bin.js work --key "$KEY" --key-rerun "${KEY}-w3" --command /tmp/check.sh --batch-size 1 --verbose --json-out tmp/e2e_fail_results/w3.json > fail-worker-3.log 2>&1 &
+          GITHUB_STEP_SUMMARY= node dist/bin.js work --key "$KEY" --key-rerun "${KEY}-w3" --command /tmp/check.sh --batch-size 1 --verbose --report tmp/e2e_fail_results/w3.json > fail-worker-3.log 2>&1 &
           PID3=$!
 
           W1_EXIT=0; wait $PID1 || W1_EXIT=$?
@@ -317,12 +317,12 @@ jobs:
           GITHUB_STEP_SUMMARY= node "$SPECBANDIT" work --key "$KEY" --key-rerun "${KEY}-w1" \
             --adapter jest --jest-config ./jest.config.js --project-root . \
             --command-opts "--cacheDirectory .jest-cache-w1" \
-            --batch-size 1 --verbose --json-out jest-fail-results/w1.json > jest-fail-w1.log 2>&1 &
+            --batch-size 1 --verbose --report jest-fail-results/w1.json > jest-fail-w1.log 2>&1 &
           PID1=$!
           GITHUB_STEP_SUMMARY= node "$SPECBANDIT" work --key "$KEY" --key-rerun "${KEY}-w2" \
             --adapter jest --jest-config ./jest.config.js --project-root . \
             --command-opts "--cacheDirectory .jest-cache-w2" \
-            --batch-size 1 --verbose --json-out jest-fail-results/w2.json > jest-fail-w2.log 2>&1 &
+            --batch-size 1 --verbose --report jest-fail-results/w2.json > jest-fail-w2.log 2>&1 &
           PID2=$!
 
           W1_EXIT=0; wait $PID1 || W1_EXIT=$?
@@ -445,12 +445,12 @@ jobs:
           # Use -- to pass --silent and --passWithNoTests (instead of --command-opts)
           GITHUB_STEP_SUMMARY= node "$SPECBANDIT" work --key "$KEY" --key-rerun "${KEY}-w1" \
             --adapter jest --jest-config ./jest.config.js --project-root . \
-            --batch-size 3 --verbose --json-out jest-dashdash-results/w1.json \
+            --batch-size 3 --verbose --report jest-dashdash-results/w1.json \
             -- --silent --passWithNoTests > jest-dashdash-w1.log 2>&1 &
           PID1=$!
           GITHUB_STEP_SUMMARY= node "$SPECBANDIT" work --key "$KEY" --key-rerun "${KEY}-w2" \
             --adapter jest --jest-config ./jest.config.js --project-root . \
-            --batch-size 3 --verbose --json-out jest-dashdash-results/w2.json \
+            --batch-size 3 --verbose --report jest-dashdash-results/w2.json \
             -- --silent --passWithNoTests > jest-dashdash-w2.log 2>&1 &
           PID2=$!
 
@@ -601,7 +601,7 @@ jobs:
           W1_EXIT=0
           GITHUB_STEP_SUMMARY= node "$SPECBANDIT" work --key "$KEY" --key-rerun "${KEY}-w1" \
             --adapter cypress --cypress-config ./cypress.config.js --project-root . \
-            --batch-size 1 --verbose --json-out cypress-fail-results/w1.json > cypress-fail-w1.log 2>&1 || W1_EXIT=$?
+            --batch-size 1 --verbose --report cypress-fail-results/w1.json > cypress-fail-w1.log 2>&1 || W1_EXIT=$?
 
           echo "========== Cypress Worker 1 (exit: $W1_EXIT) =========="
           cat "cypress-fail-w1.log"

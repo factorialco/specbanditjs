@@ -448,7 +448,7 @@ describe.each([
       expect(output).toContain('Batch #1 (exit code 1)')
     })
 
-    describe('JSON output', () => {
+    describe('report output', () => {
       let tmpDir: string
 
       beforeEach(() => {
@@ -459,8 +459,8 @@ describe.each([
         fs.rmSync(tmpDir, { recursive: true, force: true })
       })
 
-      it('writes JSON results to --json-out file', async () => {
-        const jsonOutPath = path.join(tmpDir, 'results.json')
+      it('writes JSON report to --report file', async () => {
+        const reportPath = path.join(tmpDir, 'report.json')
         queue.steal
           .mockResolvedValueOnce(['test/a.test.ts'])
           .mockResolvedValueOnce(['test/b.test.ts'])
@@ -468,26 +468,73 @@ describe.each([
 
         fixture.failBatch(2)
 
-        await makeWorker({ jsonOut: jsonOutPath }).run()
+        await makeWorker({ report: reportPath }).run()
 
-        expect(fs.existsSync(jsonOutPath)).toBe(true)
-        const data = JSON.parse(fs.readFileSync(jsonOutPath, 'utf8'))
+        expect(fs.existsSync(reportPath)).toBe(true)
+        const data = JSON.parse(fs.readFileSync(reportPath, 'utf8'))
         expect(data.summary.total_files).toBe(2)
         expect(data.summary.total_batches).toBe(2)
+        expect(data.summary.passed_batches).toBe(1)
         expect(data.summary.failed_batches).toBe(1)
         expect(data.summary.passed).toBe(false)
+        expect(data.failed_files).toEqual(['test/b.test.ts'])
+        expect(data.total_wall_time).toBeTypeOf('number')
         expect(data.batch_timings.count).toBe(2)
         expect(data.batches).toHaveLength(2)
+        expect(data.batches[0].passed).toBe(true)
+        expect(data.batches[1].passed).toBe(false)
       })
 
-      it('does not write JSON when --json-out is not set', async () => {
-        const jsonOutPath = path.join(tmpDir, 'results.json')
+      it('does not write report when --report is not set', async () => {
+        const reportPath = path.join(tmpDir, 'report.json')
         queue.steal
           .mockResolvedValueOnce(['test/a.test.ts'])
           .mockResolvedValueOnce([])
 
         await makeWorker().run()
-        expect(fs.existsSync(jsonOutPath)).toBe(false)
+        expect(fs.existsSync(reportPath)).toBe(false)
+      })
+
+      it('includes all failed files from multiple failed batches', async () => {
+        const reportPath = path.join(tmpDir, 'report.json')
+        queue.steal
+          .mockResolvedValueOnce(['test/a.test.ts'])
+          .mockResolvedValueOnce(['test/b.test.ts'])
+          .mockResolvedValueOnce([])
+
+        fixture.failBatch(1, 2)
+
+        await makeWorker({ report: reportPath }).run()
+
+        const data = JSON.parse(fs.readFileSync(reportPath, 'utf8'))
+        expect(data.failed_files).toEqual(['test/a.test.ts', 'test/b.test.ts'])
+        expect(data.summary.passed_batches).toBe(0)
+      })
+
+      it('uses failedFiles from adapter when available', async () => {
+        const reportPath = path.join(tmpDir, 'report.json')
+        // Only works with mock adapter fixture — skip for CLI adapter
+        if (!('adapter' in fixture.adapterOpts)) return
+
+        const adapter = fixture.adapterOpts.adapter as any
+        adapter.runBatch.mockReset()
+        adapter.runBatch
+          .mockResolvedValueOnce({
+            batchNum: 1,
+            files: ['test/a.test.ts', 'test/b.test.ts'],
+            exitCode: 1,
+            duration: 0.1,
+            failedFiles: ['test/b.test.ts'],
+          })
+
+        queue.steal
+          .mockResolvedValueOnce(['test/a.test.ts', 'test/b.test.ts'])
+          .mockResolvedValueOnce([])
+
+        await makeWorker({ report: reportPath }).run()
+
+        const data = JSON.parse(fs.readFileSync(reportPath, 'utf8'))
+        expect(data.failed_files).toEqual(['test/b.test.ts'])
       })
     })
 
