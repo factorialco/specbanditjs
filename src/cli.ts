@@ -161,7 +161,7 @@ Options:
   --key-failed-ttl SECS  TTL for failed key (default: 604800 / 1 week)
   --rerun                Safety flag: fail if rerun key is empty (prevents silent false passes)
   --verbose              Show per-batch file list and full command output
-  --json-out PATH        Write merged JSON results to file
+  --report PATH          Write JSON report with statistics to file
   -h, --help             Show this help
 
 Arguments after -- are forwarded to the adapter (jest opts, command opts, etc.).
@@ -222,7 +222,7 @@ Adapters:
       rerun: config.rerun,
       verbose: config.verbose,
       queue,
-      jsonOut: flags['json-out'] ?? null,
+      report: flags['report'] ?? null,
     })
 
     return await worker.run()
@@ -262,7 +262,7 @@ Work options:
   --key-failed-ttl N     TTL for failed key (default: 604800 / 1 week)
   --rerun                Safety flag: fail if rerun key is empty
   --verbose              Show per-batch file list and full command output
-  --json-out PATH        Write merged JSON results to file
+  --report PATH          Write JSON report with statistics to file
 
   Arguments after -- are forwarded to the adapter (jest opts, command opts, etc.).
   They are merged with --command-opts if both are provided.
