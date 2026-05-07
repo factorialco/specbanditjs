@@ -29,13 +29,17 @@
   },
   "peerDependencies": {
     "jest": "^29.0.0",
-    "cypress": "^13.0.0"
+    "cypress": "^13.0.0",
+    "vitest": "^2.0.0 || ^3.0.0"
   },
   "peerDependenciesMeta": {
     "jest": {
       "optional": true
     },
     "cypress": {
+      "optional": true
+    },
+    "vitest": {
       "optional": true
     }
   },
