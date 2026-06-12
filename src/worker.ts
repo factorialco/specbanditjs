@@ -1,8 +1,24 @@
 import fs from 'node:fs'
+import fg from 'fast-glob'
 import { RedisQueue } from './redisQueue.js'
 import { VERSION } from './configuration.js'
 import type { Adapter, BatchResult } from './adapter.js'
 import { CliAdapter } from './cliAdapter.js'
+
+/**
+ * Connection-level Redis failures (host down, DNS gone, retries exhausted).
+ * Command-level errors (e.g. WRONGTYPE) are NOT connection errors and must
+ * keep propagating: only an unreachable Redis justifies the static fallback.
+ */
+function isConnectionError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false
+  if (error.name === 'MaxRetriesPerRequestError') return true
+  const code = (error as NodeJS.ErrnoException).code
+  if (code && ['ECONNREFUSED', 'ETIMEDOUT', 'ENOTFOUND', 'ECONNRESET', 'EHOSTUNREACH', 'EPIPE'].includes(code)) {
+    return true
+  }
+  return error.message.includes('Connection is closed')
+}
 
 export interface WorkerOptions {
   key: string
@@ -17,6 +33,9 @@ export interface WorkerOptions {
   queue?: RedisQueue
   output?: NodeJS.WritableStream
   report?: string | null
+  fallbackPattern?: string | null
+  nodeIndex?: number | null
+  nodeTotal?: number | null
 }
 
 /**
@@ -52,9 +71,13 @@ export class Worker {
   readonly verbose: boolean
   readonly output: NodeJS.WritableStream
   readonly report: string | null
+  readonly fallbackPattern: string | null
+  readonly nodeIndex: number | null
+  readonly nodeTotal: number | null
 
   private batchResults: BatchResult[] = []
   private startTime: number = 0
+  private fallbackActive = false
 
   constructor(options: WorkerOptions | WorkerOptionsLegacy) {
     this.key = options.key
@@ -68,6 +91,9 @@ export class Worker {
     this.queue = options.queue ?? new RedisQueue()
     this.output = options.output ?? process.stdout
     this.report = options.report ?? null
+    this.fallbackPattern = ('fallbackPattern' in options ? options.fallbackPattern : null) ?? null
+    this.nodeIndex = ('nodeIndex' in options ? options.nodeIndex : null) ?? null
+    this.nodeTotal = ('nodeTotal' in options ? options.nodeTotal : null) ?? null
 
     // Support both new adapter-based and legacy command-based options
     if ('adapter' in options) {
@@ -92,19 +118,7 @@ export class Worker {
     let exitCode: number
 
     try {
-      if (this.keyRerun) {
-        const rerunFiles = await this.queue.readAll(this.keyRerun)
-        if (rerunFiles.length > 0) {
-          exitCode = await this.runReplay(rerunFiles)
-        } else if (this.rerun) {
-          this.log(`ERROR: --rerun flag is set but rerun key '${this.keyRerun}' is empty. The rerun key may have expired (TTL) or Redis was flushed. Cannot replay — failing to prevent silent false pass.`)
-          return 1
-        } else {
-          exitCode = await this.runSteal(true)
-        }
-      } else {
-        exitCode = await this.runSteal(false)
-      }
+      exitCode = await this.dispatch()
 
       if (this.batchResults.length > 0) {
         this.printSummary()
@@ -118,6 +132,35 @@ export class Worker {
   }
 
   /**
+   * Decide the operating mode and execute it, returning the exit code.
+   */
+  private async dispatch(): Promise<number> {
+    if (!this.keyRerun) {
+      return this.runSteal(false)
+    }
+
+    let rerunFiles: string[]
+    try {
+      rerunFiles = await this.queue.readAll(this.keyRerun)
+    } catch (error) {
+      // Replay integrity cannot be guaranteed without the recorded file list:
+      // a static slice may differ from what this runner originally executed,
+      // so an explicit re-run must still fail hard.
+      if (this.rerun || !this.fallbackEnabled() || !isConnectionError(error)) throw error
+      return this.enterFallback(error, false)
+    }
+
+    if (rerunFiles.length > 0) {
+      return this.runReplay(rerunFiles)
+    }
+    if (this.rerun) {
+      this.log(`ERROR: --rerun flag is set but rerun key '${this.keyRerun}' is empty. The rerun key may have expired (TTL) or Redis was flushed. Cannot replay — failing to prevent silent false pass.`)
+      return 1
+    }
+    return this.runSteal(true)
+  }
+
+  /**
    * Replay mode: run a known list of files in local batches.
    * Used when re-running a failed CI job -- the rerun key already
    * contains the exact files this runner executed previously.
@@ -126,6 +169,19 @@ export class Worker {
     this.log(`[specbandit] Replay mode: found ${files.length} files in rerun key '${this.keyRerun}'.`)
     this.log('[specbandit] Running previously recorded files (not touching shared queue).')
 
+    const { failed, batchNum } = await this.runLocalBatches(files)
+
+    this.log(
+      `[specbandit] Replay finished: ${batchNum} batches. ${failed ? 'SOME FAILED' : 'All passed.'}`
+    )
+    return failed ? 1 : 0
+  }
+
+  /**
+   * Run a known list of files in local batches (no shared-queue interaction).
+   * Used by replay mode and by the static-split fallback.
+   */
+  private async runLocalBatches(files: string[]): Promise<{ failed: boolean; batchNum: number }> {
     let failed = false
     let batchNum = 0
 
@@ -149,10 +205,7 @@ export class Worker {
       }
     }
 
-    this.log(
-      `[specbandit] Replay finished: ${batchNum} batches. ${failed ? 'SOME FAILED' : 'All passed.'}`
-    )
-    return failed ? 1 : 0
+    return { failed, batchNum }
   }
 
   /**
@@ -172,16 +225,30 @@ export class Worker {
 
     // eslint-disable-next-line no-constant-condition
     while (true) {
-      const files = await this.queue.steal(this.key, this.batchSize)
+      let files: string[]
+      try {
+        files = await this.queue.steal(this.key, this.batchSize)
+      } catch (error) {
+        if (!this.fallbackEnabled() || !isConnectionError(error)) throw error
+        return this.enterFallback(error, failed)
+      }
 
       if (files.length === 0) {
         this.log('[specbandit] Queue exhausted. No more files to run.')
         break
       }
 
-      // Record the stolen batch so this runner can replay on re-run
+      // Record the stolen batch so this runner can replay on re-run.
+      // Best-effort when fallback is enabled: losing rerun bookkeeping is
+      // better than losing the whole shard, and if Redis is really down the
+      // next steal will trigger the fallback anyway.
       if (record && this.keyRerun) {
-        await this.queue.push(this.keyRerun, files, this.keyRerunTtl)
+        try {
+          await this.queue.push(this.keyRerun, files, this.keyRerunTtl)
+        } catch (error) {
+          if (!this.fallbackEnabled() || !isConnectionError(error)) throw error
+          this.log(`[specbandit] WARNING: could not record rerun batch (${error}). Continuing.`)
+        }
       }
 
       batchNum++
@@ -213,13 +280,70 @@ export class Worker {
     return failed ? 1 : 0
   }
 
+  // --- Fallback ---
+
+  /**
+   * Fallback is opt-in: it requires a glob pattern plus the node index/total
+   * of this runner (validated in Configuration.validate()).
+   */
+  private fallbackEnabled(): boolean {
+    return this.fallbackPattern != null && this.fallbackPattern !== '' && this.nodeIndex != null && this.nodeTotal != null
+  }
+
+  /**
+   * Redis is unreachable: degrade to a deterministic static split instead of
+   * failing the shard. Every file belongs to exactly one node's slice, so the
+   * union over all nodes covers the whole suite even when some nodes already
+   * stole batches from the queue (duplicates are possible, misses are not).
+   */
+  private async enterFallback(error: unknown, priorFailed: boolean): Promise<number> {
+    this.fallbackActive = true
+    const nodeIndex = this.nodeIndex!
+    const nodeTotal = this.nodeTotal!
+    this.output.write(`[specbandit] WARNING: Redis unreachable (${error}).\n`)
+    this.output.write(
+      `[specbandit] Falling back to static split: node ${nodeIndex + 1}/${nodeTotal} of '${this.fallbackPattern}'.\n`
+    )
+
+    // Mirror the publisher's glob (fast-glob, onlyFiles, sorted) so the file
+    // paths match the form that was pushed to the queue.
+    const allFiles = (await fg(this.fallbackPattern!, { onlyFiles: true })).sort()
+    if (allFiles.length === 0) {
+      this.output.write(
+        `[specbandit] ERROR: fallback pattern '${this.fallbackPattern}' matched no files. Refusing to silently skip the suite.\n`
+      )
+      return 1
+    }
+
+    const slice = allFiles.filter((_, i) => i % nodeTotal === nodeIndex)
+    const alreadyRun = new Set(this.batchResults.flatMap((r) => r.files))
+    const remaining = slice.filter((f) => !alreadyRun.has(f))
+    this.output.write(
+      `[specbandit] Fallback slice: ${slice.length} files, ${remaining.length} not yet run by this node.\n`
+    )
+
+    const { failed: fallbackFailed, batchNum } = await this.runLocalBatches(remaining)
+    this.log(
+      `[specbandit] Fallback finished: ${batchNum} batches. ${fallbackFailed ? 'SOME FAILED' : 'All passed.'}`
+    )
+    return priorFailed || fallbackFailed ? 1 : 0
+  }
+
   // --- Reporting helpers ---
 
   private async recordFailed(result: BatchResult): Promise<void> {
-    if (this.keyFailed) {
-      const files = result.failedFiles ?? result.files
-      await this.queue.push(this.keyFailed, files, this.keyFailedTtl)
+    if (!this.keyFailed) return
+
+    const files = result.failedFiles ?? result.files
+
+    // In fallback mode Redis is known to be down: skip the write instead of
+    // crashing. Failed files still reach the local JSON report.
+    if (this.fallbackActive) {
+      this.log(`[specbandit] Skipping failed-files Redis write (fallback mode): ${files.length} files.`)
+      return
     }
+
+    await this.queue.push(this.keyFailed, files, this.keyFailedTtl)
   }
 
   private printSummary(): void {

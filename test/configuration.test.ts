@@ -16,6 +16,11 @@ describe('Configuration', () => {
     'SPECBANDIT_KEY_FAILED_TTL',
     'SPECBANDIT_VERBOSE',
     'SPECBANDIT_RERUN',
+    'SPECBANDIT_FALLBACK_PATTERN',
+    'SPECBANDIT_NODE_INDEX',
+    'SPECBANDIT_NODE_TOTAL',
+    'CI_NODE_INDEX',
+    'CI_NODE_TOTAL',
   ]
   let savedEnv: Record<string, string | undefined>
 
@@ -246,6 +251,73 @@ describe('Configuration', () => {
     it('passes when key and batch_size are valid', () => {
       const config = new Configuration({ key: 'valid-key', batchSize: 3 })
       expect(() => config.validate()).not.toThrow()
+    })
+
+    describe('fallback options', () => {
+      it('passes with a pattern and valid node index/total', () => {
+        const config = new Configuration({
+          key: 'valid-key',
+          fallbackPattern: '**/*.test.ts',
+          nodeIndex: 0,
+          nodeTotal: 4,
+        })
+        expect(() => config.validate()).not.toThrow()
+      })
+
+      it('throws when node index/total are missing', () => {
+        const config = new Configuration({ key: 'valid-key', fallbackPattern: '**/*.test.ts' })
+        expect(() => config.validate()).toThrow(/fallback requires node index\/total/)
+      })
+
+      it('throws when node_total is not positive', () => {
+        const config = new Configuration({
+          key: 'valid-key',
+          fallbackPattern: '**/*.test.ts',
+          nodeIndex: 0,
+          nodeTotal: 0,
+        })
+        expect(() => config.validate()).toThrow(/node_total must be a positive integer/)
+      })
+
+      it('throws when node_index is out of range', () => {
+        const config = new Configuration({
+          key: 'valid-key',
+          fallbackPattern: '**/*.test.ts',
+          nodeIndex: 4,
+          nodeTotal: 4,
+        })
+        expect(() => config.validate()).toThrow(/node_index must be in 0\.\.\.node_total/)
+      })
+
+      it('does not validate node settings when no fallback pattern is set', () => {
+        const config = new Configuration({ key: 'valid-key' })
+        expect(() => config.validate()).not.toThrow()
+      })
+
+      it('reads fallback settings from SPECBANDIT_* env vars', () => {
+        process.env.SPECBANDIT_FALLBACK_PATTERN = 'src/**/*.test.ts'
+        process.env.SPECBANDIT_NODE_INDEX = '3'
+        process.env.SPECBANDIT_NODE_TOTAL = '16'
+        const config = new Configuration()
+        expect(config.fallbackPattern).toBe('src/**/*.test.ts')
+        expect(config.nodeIndex).toBe(3)
+        expect(config.nodeTotal).toBe(16)
+      })
+
+      it('falls back to CI_NODE_INDEX/CI_NODE_TOTAL', () => {
+        process.env.CI_NODE_INDEX = '5'
+        process.env.CI_NODE_TOTAL = '8'
+        const config = new Configuration()
+        expect(config.nodeIndex).toBe(5)
+        expect(config.nodeTotal).toBe(8)
+      })
+
+      it('prefers SPECBANDIT_NODE_* over CI_NODE_*', () => {
+        process.env.SPECBANDIT_NODE_INDEX = '1'
+        process.env.CI_NODE_INDEX = '7'
+        const config = new Configuration()
+        expect(config.nodeIndex).toBe(1)
+      })
     })
   })
 

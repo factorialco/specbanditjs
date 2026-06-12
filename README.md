@@ -85,6 +85,9 @@ specbandit work [options]
   --key-rerun KEY        Per-runner rerun key for re-run support (see below)
   --key-rerun-ttl SECS   TTL for rerun key (default: 604800 / 1 week)
   --rerun                Safety flag: fail if rerun key is empty (prevents silent false passes)
+  --fallback-pattern P   Glob pattern enabling static-split fallback when Redis is unreachable
+  --node-index N         This node index for the fallback split (default: CI_NODE_INDEX)
+  --node-total N         Total nodes for the fallback split (default: CI_NODE_TOTAL)
   --verbose              Show per-batch file list and full command output
   --json-out PATH        Write merged JSON results to file
 ```
@@ -105,8 +108,32 @@ All CLI options can be set via environment variables:
 | `SPECBANDIT_KEY_RERUN_TTL` | Rerun key expiry in seconds | `604800` (1 week) |
 | `SPECBANDIT_RERUN` | Safety flag for reruns (1/true/yes) | `false` |
 | `SPECBANDIT_VERBOSE` | Enable verbose output (1/true/yes) | `false` |
+| `SPECBANDIT_FALLBACK_PATTERN` | Glob pattern enabling static-split fallback on Redis outage | *(none / disabled)* |
+| `SPECBANDIT_NODE_INDEX` | Node index for the fallback split | `CI_NODE_INDEX` |
+| `SPECBANDIT_NODE_TOTAL` | Total nodes for the fallback split | `CI_NODE_TOTAL` |
 
 CLI flags take precedence over environment variables.
+
+### Static-split fallback (Redis outage resilience)
+
+By default a worker fails hard (exit 1) when Redis becomes unreachable, which
+takes the whole CI shard down with it. With `--fallback-pattern` (or
+`SPECBANDIT_FALLBACK_PATTERN`) the worker instead degrades gracefully:
+
+1. When a connection-level Redis error survives the built-in retries, the
+   worker globs the pattern locally (same fast-glob semantics as `push
+   --pattern`), sorts the files for determinism, and takes the slice where
+   `position % node_total == node_index`.
+2. Files this worker already ran (stolen before the outage) are skipped.
+3. The slice runs through the normal adapter; the local `--report` file is
+   still written, but Redis bookkeeping (rerun/failed keys) is skipped.
+
+Every file belongs to exactly one node's slice, so the union over all nodes
+always covers the full suite — workers that stole batches before the outage
+may duplicate some work, but no file can be silently skipped. An explicit
+`--rerun` still fails hard when Redis is down, because replay integrity
+cannot be verified without the recorded file list. A fallback pattern that
+matches zero files is treated as an error (exit 1), not as an empty suite.
 
 ### Node.js API
 

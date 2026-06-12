@@ -772,3 +772,230 @@ describe('Worker legacy constructor', () => {
     )
   })
 })
+
+// ────────────────────────────────────────────────────────────────────────────
+// Static-split fallback on Redis outage
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('Worker static-split fallback', () => {
+  let tmpdir: string
+  let allFiles: string[]
+
+  function connError(): Error {
+    const e = new Error('Reached the max retries per request limit')
+    e.name = 'MaxRetriesPerRequestError'
+    return e
+  }
+
+  beforeEach(() => {
+    tmpdir = fs.mkdtempSync(path.join(os.tmpdir(), 'specbandit-fallback-'))
+    allFiles = ['a', 'b', 'c', 'd', 'e'].map((name) => {
+      const file = path.join(tmpdir, `${name}.test.ts`)
+      fs.writeFileSync(file, '')
+      return file
+    })
+  })
+
+  afterEach(() => {
+    fs.rmSync(tmpdir, { recursive: true, force: true })
+  })
+
+  function buildWorker(opts: {
+    queue: RedisQueue
+    adapter: Adapter
+    nodeIndex: number
+    nodeTotal?: number
+    keyRerun?: string | null
+    rerun?: boolean
+    keyFailed?: string | null
+    output?: NodeJS.WritableStream
+    fallbackPattern?: string | null
+  }): Worker {
+    return new Worker({
+      key: 'shared-queue',
+      adapter: opts.adapter,
+      batchSize: 2,
+      queue: opts.queue,
+      keyRerun: opts.keyRerun ?? null,
+      rerun: opts.rerun ?? false,
+      keyFailed: opts.keyFailed ?? null,
+      output: opts.output ?? createOutputCapture().stream,
+      fallbackPattern: opts.fallbackPattern === undefined ? path.join(tmpdir, '*.test.ts') : opts.fallbackPattern,
+      nodeIndex: opts.nodeIndex,
+      nodeTotal: opts.nodeTotal ?? 2,
+    })
+  }
+
+  function trackRanFiles(adapter: ReturnType<typeof createMockAdapter>): string[] {
+    const ran: string[] = []
+    adapter.runBatch.mockImplementation(async (files: string[], batchNum: number): Promise<BatchResult> => {
+      ran.push(...files)
+      return { batchNum, files, exitCode: 0, duration: 0.1 }
+    })
+    return ran
+  }
+
+  it('propagates the connection error when fallback is not configured', async () => {
+    const queue = createMockQueue()
+    const adapter = createMockAdapter()
+    ;(queue.steal as ReturnType<typeof vi.fn>).mockRejectedValue(connError())
+
+    const worker = buildWorker({ queue, adapter, nodeIndex: 0, fallbackPattern: null })
+
+    await expect(worker.run()).rejects.toThrow('max retries')
+  })
+
+  it('propagates non-connection errors even with fallback configured', async () => {
+    const queue = createMockQueue()
+    const adapter = createMockAdapter()
+    ;(queue.steal as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('WRONGTYPE Operation against a key'))
+
+    const worker = buildWorker({ queue, adapter, nodeIndex: 0 })
+
+    await expect(worker.run()).rejects.toThrow('WRONGTYPE')
+  })
+
+  it('runs only this node slice and exits 0 when Redis is down from the start', async () => {
+    const queue = createMockQueue()
+    const adapter = createMockAdapter()
+    const ran = trackRanFiles(adapter)
+    ;(queue.steal as ReturnType<typeof vi.fn>).mockRejectedValue(connError())
+    const { stream, getOutput } = createOutputCapture()
+
+    const exitCode = await buildWorker({ queue, adapter, nodeIndex: 0, output: stream }).run()
+
+    expect(exitCode).toBe(0)
+    expect(ran).toEqual([allFiles[0], allFiles[2], allFiles[4]])
+    expect(getOutput()).toContain('Falling back to static split')
+  })
+
+  it('produces disjoint, exhaustive slices across nodes', async () => {
+    const slices: string[][] = []
+    for (const nodeIndex of [0, 1]) {
+      const queue = createMockQueue()
+      const adapter = createMockAdapter()
+      const ran = trackRanFiles(adapter)
+      ;(queue.steal as ReturnType<typeof vi.fn>).mockRejectedValue(connError())
+      await buildWorker({ queue, adapter, nodeIndex }).run()
+      slices.push(ran)
+    }
+
+    const [first, second] = slices
+    expect(first.filter((f) => second.includes(f))).toEqual([])
+    expect([...first, ...second].sort()).toEqual(allFiles)
+  })
+
+  it('skips files already run and preserves earlier failures when Redis dies mid-run', async () => {
+    const queue = createMockQueue()
+    const adapter = createMockAdapter()
+    let stealCalls = 0
+    ;(queue.steal as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      stealCalls++
+      if (stealCalls > 1) throw connError()
+      return [allFiles[0]]
+    })
+
+    const ran: string[] = []
+    adapter.runBatch.mockImplementation(async (files: string[], batchNum: number): Promise<BatchResult> => {
+      ran.push(...files)
+      // The first (stolen) batch fails; fallback batches pass.
+      return { batchNum, files, exitCode: batchNum === 1 ? 1 : 0, duration: 0.1 }
+    })
+
+    const exitCode = await buildWorker({ queue, adapter, nodeIndex: 0 }).run()
+
+    expect(exitCode).toBe(1)
+    expect(ran).toEqual([allFiles[0], allFiles[2], allFiles[4]])
+  })
+
+  it('fails when the fallback pattern matches no files', async () => {
+    const queue = createMockQueue()
+    const adapter = createMockAdapter()
+    ;(queue.steal as ReturnType<typeof vi.fn>).mockRejectedValue(connError())
+    const { stream, getOutput } = createOutputCapture()
+
+    const worker = buildWorker({
+      queue,
+      adapter,
+      nodeIndex: 0,
+      output: stream,
+      fallbackPattern: path.join(tmpdir, 'nothing', '*.test.ts'),
+    })
+
+    expect(await worker.run()).toBe(1)
+    expect(getOutput()).toContain('matched no files')
+  })
+
+  it('falls back when reading the rerun key fails in record mode', async () => {
+    const queue = createMockQueue()
+    const adapter = createMockAdapter()
+    const ran = trackRanFiles(adapter)
+    ;(queue.readAll as ReturnType<typeof vi.fn>).mockRejectedValue(connError())
+
+    const exitCode = await buildWorker({ queue, adapter, nodeIndex: 1, keyRerun: 'rerun-key' }).run()
+
+    expect(exitCode).toBe(0)
+    expect(ran).toEqual([allFiles[1], allFiles[3]])
+  })
+
+  it('still fails hard on an explicit --rerun (replay integrity)', async () => {
+    const queue = createMockQueue()
+    const adapter = createMockAdapter()
+    ;(queue.readAll as ReturnType<typeof vi.fn>).mockRejectedValue(connError())
+
+    const worker = buildWorker({ queue, adapter, nodeIndex: 0, keyRerun: 'rerun-key', rerun: true })
+
+    await expect(worker.run()).rejects.toThrow('max retries')
+  })
+
+  it('continues when recording the rerun batch fails', async () => {
+    const queue = createMockQueue()
+    const adapter = createMockAdapter()
+    const ran = trackRanFiles(adapter)
+    let stealCalls = 0
+    ;(queue.steal as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      stealCalls++
+      if (stealCalls > 1) throw connError()
+      return [allFiles[0]]
+    })
+    ;(queue.push as ReturnType<typeof vi.fn>).mockRejectedValue(connError())
+    const { stream, getOutput } = createOutputCapture()
+
+    const exitCode = await buildWorker({
+      queue,
+      adapter,
+      nodeIndex: 0,
+      keyRerun: 'rerun-key',
+      output: stream,
+    }).run()
+
+    expect(exitCode).toBe(0)
+    expect(ran).toEqual([allFiles[0], allFiles[2], allFiles[4]])
+    expect(getOutput()).toContain('could not record rerun batch')
+  })
+
+  it('does not write failed files to Redis while in fallback', async () => {
+    const queue = createMockQueue()
+    const adapter = createMockAdapter()
+    ;(queue.steal as ReturnType<typeof vi.fn>).mockRejectedValue(connError())
+    adapter.runBatch.mockImplementation(async (files: string[], batchNum: number): Promise<BatchResult> => ({
+      batchNum,
+      files,
+      exitCode: 1,
+      duration: 0.1,
+    }))
+    const { stream, getOutput } = createOutputCapture()
+
+    const exitCode = await buildWorker({
+      queue,
+      adapter,
+      nodeIndex: 0,
+      keyFailed: 'failed-key',
+      output: stream,
+    }).run()
+
+    expect(exitCode).toBe(1)
+    expect(queue.push).not.toHaveBeenCalled()
+    expect(getOutput()).toContain('Skipping failed-files Redis write')
+  })
+})

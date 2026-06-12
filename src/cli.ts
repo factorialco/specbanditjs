@@ -160,6 +160,9 @@ Options:
   --key-failed KEY       Redis key to store failed test file paths for later review
   --key-failed-ttl SECS  TTL for failed key (default: 604800 / 1 week)
   --rerun                Safety flag: fail if rerun key is empty (prevents silent false passes)
+  --fallback-pattern P   Glob pattern enabling static-split fallback when Redis is unreachable
+  --node-index N         This node index for the fallback split (default: CI_NODE_INDEX)
+  --node-total N         Total nodes for the fallback split (default: CI_NODE_TOTAL)
   --verbose              Show per-batch file list and full command output
   --report PATH          Write JSON report with statistics to file
   -h, --help             Show this help
@@ -196,6 +199,9 @@ Adapters:
     keyFailedTtl: flags['key-failed-ttl'] ? parseInt(flags['key-failed-ttl'], 10) : undefined,
     rerun: flags.rerun === 'true' ? true : undefined,
     verbose: flags.verbose === 'true' ? true : undefined,
+    fallbackPattern: flags['fallback-pattern'],
+    nodeIndex: flags['node-index'] ? parseInt(flags['node-index'], 10) : undefined,
+    nodeTotal: flags['node-total'] ? parseInt(flags['node-total'], 10) : undefined,
   })
 
   // Only validate command requirement for CLI adapter
@@ -223,6 +229,9 @@ Adapters:
       verbose: config.verbose,
       queue,
       report: flags['report'] ?? process.env.SPECBANDIT_REPORT ?? null,
+      fallbackPattern: config.fallbackPattern,
+      nodeIndex: config.nodeIndex,
+      nodeTotal: config.nodeTotal,
     })
 
     return await worker.run()
@@ -287,6 +296,9 @@ Environment variables:
   SPECBANDIT_RERUN            Safety flag for reruns (1/true/yes)
   SPECBANDIT_VERBOSE          Enable verbose output (1/true/yes)
   SPECBANDIT_REPORT           Path to write JSON report file
+  SPECBANDIT_FALLBACK_PATTERN Glob pattern enabling static-split fallback on Redis outage
+  SPECBANDIT_NODE_INDEX       Node index for the fallback split (falls back to CI_NODE_INDEX)
+  SPECBANDIT_NODE_TOTAL       Total nodes for the fallback split (falls back to CI_NODE_TOTAL)
 
 File input priority for push:
   1. stdin (piped)     echo "test/a.test.ts" | specbandit push --key KEY

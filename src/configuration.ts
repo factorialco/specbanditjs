@@ -1,4 +1,4 @@
-export const VERSION = '0.10.0'
+export const VERSION = '0.17.0'
 
 export class SpecbanditError extends Error {
   constructor(message: string) {
@@ -20,6 +20,9 @@ export interface ConfigurationOptions {
   keyFailedTtl?: number
   rerun?: boolean
   verbose?: boolean
+  fallbackPattern?: string | null
+  nodeIndex?: number | null
+  nodeTotal?: number | null
 }
 
 const DEFAULT_REDIS_URL = 'redis://localhost:6379'
@@ -37,6 +40,11 @@ function parseCommandOpts(opts: string | undefined | null): string[] {
   return opts.split(/\s+/)
 }
 
+function parseOptionalInt(value: string | undefined | null): number | null {
+  if (value == null || value === '') return null
+  return parseInt(value, 10)
+}
+
 export class Configuration {
   redisUrl: string
   batchSize: number
@@ -50,6 +58,9 @@ export class Configuration {
   keyFailedTtl: number
   rerun: boolean
   verbose: boolean
+  fallbackPattern: string | null
+  nodeIndex: number | null
+  nodeTotal: number | null
 
   constructor(options: ConfigurationOptions = {}) {
     this.redisUrl = options.redisUrl ?? process.env.SPECBANDIT_REDIS_URL ?? DEFAULT_REDIS_URL
@@ -64,6 +75,11 @@ export class Configuration {
     this.keyFailedTtl = options.keyFailedTtl ?? parseInt(process.env.SPECBANDIT_KEY_FAILED_TTL ?? String(DEFAULT_KEY_RERUN_TTL), 10)
     this.rerun = options.rerun ?? envTruthy('SPECBANDIT_RERUN')
     this.verbose = options.verbose ?? envTruthy('SPECBANDIT_VERBOSE')
+    this.fallbackPattern = options.fallbackPattern ?? process.env.SPECBANDIT_FALLBACK_PATTERN ?? null
+    this.nodeIndex =
+      options.nodeIndex ?? parseOptionalInt(process.env.SPECBANDIT_NODE_INDEX ?? process.env.CI_NODE_INDEX)
+    this.nodeTotal =
+      options.nodeTotal ?? parseOptionalInt(process.env.SPECBANDIT_NODE_TOTAL ?? process.env.CI_NODE_TOTAL)
   }
 
   validate(): void {
@@ -81,6 +97,19 @@ export class Configuration {
     }
     if (this.rerun && !this.keyRerun) {
       throw new SpecbanditError('--rerun requires --key-rerun to be set')
+    }
+    if (this.fallbackPattern) {
+      if (this.nodeIndex == null || this.nodeTotal == null || !Number.isInteger(this.nodeIndex) || !Number.isInteger(this.nodeTotal)) {
+        throw new SpecbanditError(
+          'fallback requires node index/total (set --node-index/--node-total, SPECBANDIT_NODE_INDEX/SPECBANDIT_NODE_TOTAL or CI_NODE_INDEX/CI_NODE_TOTAL)'
+        )
+      }
+      if (this.nodeTotal <= 0) {
+        throw new SpecbanditError('node_total must be a positive integer')
+      }
+      if (this.nodeIndex < 0 || this.nodeIndex >= this.nodeTotal) {
+        throw new SpecbanditError('node_index must be in 0...node_total')
+      }
     }
   }
 
