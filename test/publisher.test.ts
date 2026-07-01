@@ -68,6 +68,8 @@ describe('Publisher', () => {
         expect(queue.push).toHaveBeenCalledWith(key, files, 21_600)
         expect(queue.markPublished).toHaveBeenCalledWith(key, 21_600)
         expect(capture.output.join('')).toContain('Enqueued 2 files')
+        // Redis write latency is surfaced for both operations
+        expect(capture.output.join('')).toMatch(/Redis latency: push [\d.]+ms, mark published [\d.]+ms/)
       } finally {
         Object.defineProperty(process.stdin, 'isTTY', { value: origIsTTY, configurable: true })
       }
