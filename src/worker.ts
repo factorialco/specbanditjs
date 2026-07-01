@@ -10,7 +10,7 @@ export interface WorkerOptions {
   batchSize?: number
   keyRerun?: string | null
   keyFailed?: string | null
-  ttl?: number
+  keyTtl?: number
   verbose?: boolean
   queue?: RedisQueue
   output?: NodeJS.WritableStream
@@ -28,7 +28,7 @@ export interface WorkerOptionsLegacy {
   batchSize?: number
   keyRerun?: string | null
   keyFailed?: string | null
-  ttl?: number
+  keyTtl?: number
   verbose?: boolean
   queue?: RedisQueue
   output?: NodeJS.WritableStream
@@ -42,7 +42,7 @@ export class Worker {
   readonly batchSize: number
   readonly keyRerun: string | null
   readonly keyFailed: string | null
-  readonly ttl: number
+  readonly keyTtl: number
   readonly verbose: boolean
   readonly output: NodeJS.WritableStream
   readonly report: string | null
@@ -55,7 +55,7 @@ export class Worker {
     this.batchSize = options.batchSize ?? 5
     this.keyRerun = options.keyRerun ?? null
     this.keyFailed = options.keyFailed ?? null
-    this.ttl = options.ttl ?? 604_800
+    this.keyTtl = options.keyTtl ?? 604_800
     this.verbose = options.verbose ?? false
     this.queue = options.queue ?? new RedisQueue()
     this.output = options.output ?? process.stdout
@@ -193,7 +193,7 @@ export class Worker {
 
       // Record the stolen batch so this runner can replay on re-run
       if (record && this.keyRerun) {
-        await this.queue.push(this.keyRerun, files, this.ttl)
+        await this.queue.push(this.keyRerun, files, this.keyTtl)
       }
 
       batchNum++
@@ -230,7 +230,7 @@ export class Worker {
   private async recordFailed(result: BatchResult): Promise<void> {
     if (this.keyFailed) {
       const files = result.failedFiles ?? result.files
-      await this.queue.push(this.keyFailed, files, this.ttl)
+      await this.queue.push(this.keyFailed, files, this.keyTtl)
     }
   }
 

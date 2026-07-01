@@ -244,7 +244,7 @@ describe.each([
 
       fixture.failBatch(1)
 
-      const exitCode = await makeWorker({ keyFailed, ttl: 3600 }).run()
+      const exitCode = await makeWorker({ keyFailed, keyTtl: 3600 }).run()
 
       expect(exitCode).toBe(1)
       expect(queue.push).toHaveBeenCalledWith(keyFailed, ['test/a.test.ts', 'test/b.test.ts'], 3600)
@@ -260,7 +260,7 @@ describe.each([
 
       fixture.failBatch(1, 2)
 
-      await makeWorker({ keyFailed, ttl: 3600 }).run()
+      await makeWorker({ keyFailed, keyTtl: 3600 }).run()
 
       expect(queue.push).toHaveBeenCalledWith(keyFailed, ['test/a.test.ts'], 3600)
       expect(queue.push).toHaveBeenCalledWith(keyFailed, ['test/b.test.ts'], 3600)
@@ -272,7 +272,7 @@ describe.each([
         .mockResolvedValueOnce(['test/a.test.ts'])
         .mockResolvedValueOnce([])
 
-      await makeWorker({ keyFailed, ttl: 3600 }).run()
+      await makeWorker({ keyFailed, keyTtl: 3600 }).run()
 
       expect(queue.push).not.toHaveBeenCalled()
     })
@@ -294,7 +294,7 @@ describe.each([
 
       fixture.failBatch(2)
 
-      await makeWorker({ keyFailed, ttl: 3600, keyRerun: 'pr-123-rerun' }).run()
+      await makeWorker({ keyFailed, keyTtl: 3600, keyRerun: 'pr-123-rerun' }).run()
 
       // Batch 2 has 1 file (z.test.ts) with batchSize=2: batch1=[x,y], batch2=[z]
       expect(queue.push).toHaveBeenCalledWith(keyFailed, ['test/z.test.ts'], 3600)
@@ -309,7 +309,7 @@ describe.each([
       fixture.failBatch(1)
 
       const keyRerun = 'pr-123-rerun'
-      await makeWorker({ keyFailed, keyRerun, ttl: 3600 }).run()
+      await makeWorker({ keyFailed, keyRerun, keyTtl: 3600 }).run()
 
       // Both the rerun key (record) and failed key use the single shared TTL
       expect(queue.push).toHaveBeenCalledWith(keyRerun, ['test/a.test.ts'], 3600)
@@ -332,7 +332,7 @@ describe.each([
         .mockResolvedValueOnce(['test/c.test.ts'])
         .mockResolvedValueOnce([])
 
-      const exitCode = await makeWorker({ keyRerun, ttl: 604_800 }).run()
+      const exitCode = await makeWorker({ keyRerun, keyTtl: 604_800 }).run()
 
       expect(exitCode).toBe(0)
       expect(capture.getOutput()).toContain('Record mode')
@@ -349,7 +349,7 @@ describe.each([
 
       fixture.failBatch(1)
 
-      const exitCode = await makeWorker({ keyRerun, ttl: 604_800 }).run()
+      const exitCode = await makeWorker({ keyRerun, keyTtl: 604_800 }).run()
 
       expect(exitCode).toBe(1)
       expect(queue.push).toHaveBeenCalledWith(keyRerun, ['test/a.test.ts'], 604_800)
@@ -368,7 +368,7 @@ describe.each([
     })
 
     it('runs files from the rerun key in batches', async () => {
-      const exitCode = await makeWorker({ keyRerun, ttl: 604_800 }).run()
+      const exitCode = await makeWorker({ keyRerun, keyTtl: 604_800 }).run()
 
       expect(exitCode).toBe(0)
       // 3 files with batch_size 2 = 2 batches
@@ -380,7 +380,7 @@ describe.each([
     })
 
     it('never touches the shared queue', async () => {
-      await makeWorker({ keyRerun, ttl: 604_800 }).run()
+      await makeWorker({ keyRerun, keyTtl: 604_800 }).run()
 
       expect(queue.steal).not.toHaveBeenCalled()
       expect(queue.push).not.toHaveBeenCalled()
@@ -389,7 +389,7 @@ describe.each([
     it('returns 1 if any replay batch fails', async () => {
       fixture.failBatch(2)
 
-      const exitCode = await makeWorker({ keyRerun, ttl: 604_800 }).run()
+      const exitCode = await makeWorker({ keyRerun, keyTtl: 604_800 }).run()
 
       expect(exitCode).toBe(1)
       expect(capture.getOutput()).toContain('SOME FAILED')
@@ -656,7 +656,7 @@ describe('Worker adapter lifecycle', () => {
         adapter,
         batchSize: 2,
         keyRerun,
-        ttl: 604_800,
+        keyTtl: 604_800,
         queue: queue as unknown as RedisQueue,
         output: capture.stream,
       })
@@ -682,7 +682,7 @@ describe('Worker adapter lifecycle', () => {
         adapter,
         batchSize: 2,
         keyRerun,
-        ttl: 604_800,
+        keyTtl: 604_800,
         queue: queue as unknown as RedisQueue,
         output: capture.stream,
       })
@@ -706,7 +706,7 @@ describe('Worker adapter lifecycle', () => {
         adapter,
         batchSize: 2,
         keyRerun,
-        ttl: 604_800,
+        keyTtl: 604_800,
         queue: queue as unknown as RedisQueue,
         output: capture.stream,
       })

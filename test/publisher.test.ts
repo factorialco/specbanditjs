@@ -57,7 +57,7 @@ describe('Publisher', () => {
       try {
         const publisher = new Publisher({
           key,
-          ttl: 21_600,
+          keyTtl: 21_600,
           queue: queue as unknown as RedisQueue,
           output: capture.stream,
         })
@@ -92,7 +92,7 @@ describe('Publisher', () => {
       try {
         const publisher = new Publisher({
           key,
-          ttl: 21_600,
+          keyTtl: 21_600,
           queue: queue as unknown as RedisQueue,
           output: capture.stream,
         })
@@ -120,7 +120,7 @@ describe('Publisher', () => {
       try {
         const publisher = new Publisher({
           key,
-          ttl: 21_600,
+          keyTtl: 21_600,
           queue: queue as unknown as RedisQueue,
           output: capture.stream,
         })

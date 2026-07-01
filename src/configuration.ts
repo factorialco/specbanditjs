@@ -15,13 +15,13 @@ export interface ConfigurationOptions {
   commandOpts?: string[]
   keyRerun?: string | null
   keyFailed?: string | null
-  ttl?: number
+  keyTtl?: number
   verbose?: boolean
 }
 
 const DEFAULT_REDIS_URL = 'redis://localhost:6379'
 const DEFAULT_BATCH_SIZE = 5
-const DEFAULT_TTL = 604_800 // 1 week in seconds
+const DEFAULT_KEY_TTL = 604_800 // 1 week in seconds
 
 function envTruthy(name: string): boolean {
   const val = process.env[name]?.toLowerCase() ?? ''
@@ -41,7 +41,7 @@ export class Configuration {
   commandOpts: string[]
   keyRerun: string | null
   keyFailed: string | null
-  ttl: number
+  keyTtl: number
   verbose: boolean
 
   constructor(options: ConfigurationOptions = {}) {
@@ -52,7 +52,7 @@ export class Configuration {
     this.commandOpts = options.commandOpts ?? parseCommandOpts(process.env.SPECBANDIT_COMMAND_OPTS)
     this.keyRerun = options.keyRerun ?? process.env.SPECBANDIT_KEY_RERUN ?? null
     this.keyFailed = options.keyFailed ?? process.env.SPECBANDIT_KEY_FAILED ?? null
-    this.ttl = options.ttl ?? parseInt(process.env.SPECBANDIT_TTL ?? String(DEFAULT_TTL), 10)
+    this.keyTtl = options.keyTtl ?? parseInt(process.env.SPECBANDIT_KEY_TTL ?? String(DEFAULT_KEY_TTL), 10)
     this.verbose = options.verbose ?? envTruthy('SPECBANDIT_VERBOSE')
   }
 
@@ -63,8 +63,8 @@ export class Configuration {
     if (!Number.isInteger(this.batchSize) || this.batchSize <= 0) {
       throw new SpecbanditError('batch_size must be a positive integer')
     }
-    if (!Number.isInteger(this.ttl) || this.ttl <= 0) {
-      throw new SpecbanditError('ttl must be a positive integer')
+    if (!Number.isInteger(this.keyTtl) || this.keyTtl <= 0) {
+      throw new SpecbanditError('key_ttl must be a positive integer')
     }
   }
 

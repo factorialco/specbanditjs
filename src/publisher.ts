@@ -3,7 +3,7 @@ import { RedisQueue } from './redisQueue.js'
 
 export interface PublisherOptions {
   key: string
-  ttl?: number
+  keyTtl?: number
   queue?: RedisQueue
   output?: NodeJS.WritableStream
 }
@@ -11,12 +11,12 @@ export interface PublisherOptions {
 export class Publisher {
   readonly queue: RedisQueue
   readonly key: string
-  readonly ttl: number
+  readonly keyTtl: number
   readonly output: NodeJS.WritableStream
 
   constructor(options: PublisherOptions) {
     this.key = options.key
-    this.ttl = options.ttl ?? 604_800
+    this.keyTtl = options.keyTtl ?? 604_800
     this.queue = options.queue ?? new RedisQueue()
     this.output = options.output ?? process.stdout
   }
@@ -37,16 +37,16 @@ export class Publisher {
 
     // Time each Redis write so latency is visible in CI logs.
     const pushStart = performance.now()
-    await this.queue.push(this.key, resolved, this.ttl)
+    await this.queue.push(this.key, resolved, this.keyTtl)
     const pushMs = performance.now() - pushStart
 
     // Mark the key as published so workers can distinguish a drained queue
     // (nothing to do) from one that was never published (a real error).
     const markStart = performance.now()
-    await this.queue.markPublished(this.key, this.ttl)
+    await this.queue.markPublished(this.key, this.keyTtl)
     const markMs = performance.now() - markStart
 
-    this.log(`[specbandit] Enqueued ${resolved.length} files onto key '${this.key}' (TTL: ${this.ttl}s).`)
+    this.log(`[specbandit] Enqueued ${resolved.length} files onto key '${this.key}' (TTL: ${this.keyTtl}s).`)
     this.log(`[specbandit] Redis latency: push ${pushMs.toFixed(1)}ms, mark published ${markMs.toFixed(1)}ms.`)
     return resolved.length
   }

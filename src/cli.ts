@@ -63,7 +63,7 @@ Options:
   --key KEY            Redis queue key (required, or set SPECBANDIT_KEY)
   --pattern PATTERN    Glob pattern for file discovery (e.g. 'src/**/*.test.ts')
   --redis-url URL      Redis URL (default: redis://localhost:6379)
-  --ttl SECONDS        TTL for all Redis keys (default: 604800 / 1 week)
+  --key-ttl SECONDS    TTL for all Redis keys (default: 604800 / 1 week)
   -h, --help           Show this help`)
     return 0
   }
@@ -71,7 +71,7 @@ Options:
   const config = new Configuration({
     key: flags.key,
     redisUrl: flags['redis-url'],
-    ttl: flags['ttl'] ? parseInt(flags['ttl'], 10) : undefined,
+    keyTtl: flags['key-ttl'] ? parseInt(flags['key-ttl'], 10) : undefined,
   })
   config.validate()
 
@@ -79,7 +79,7 @@ Options:
   try {
     const publisher = new Publisher({
       key: config.key!,
-      ttl: config.ttl,
+      keyTtl: config.keyTtl,
       queue,
     })
 
@@ -157,7 +157,7 @@ Options:
   --redis-url URL        Redis URL (default: redis://localhost:6379)
   --key-rerun KEY        Per-runner rerun key for re-run support
   --key-failed KEY       Redis key to store failed test file paths for later review
-  --ttl SECONDS          TTL for all Redis keys (default: 604800 / 1 week)
+  --key-ttl SECONDS      TTL for all Redis keys (default: 604800 / 1 week)
   --verbose              Show per-batch file list and full command output
   --report PATH          Write JSON report with statistics to file
   -h, --help             Show this help
@@ -190,7 +190,7 @@ Adapters:
     redisUrl: flags['redis-url'],
     keyRerun: flags['key-rerun'],
     keyFailed: flags['key-failed'],
-    ttl: flags['ttl'] ? parseInt(flags['ttl'], 10) : undefined,
+    keyTtl: flags['key-ttl'] ? parseInt(flags['key-ttl'], 10) : undefined,
     verbose: flags.verbose === 'true' ? true : undefined,
   })
 
@@ -213,7 +213,7 @@ Adapters:
       batchSize: config.batchSize,
       keyRerun: config.keyRerun,
       keyFailed: config.keyFailed,
-      ttl: config.ttl,
+      keyTtl: config.keyTtl,
       verbose: config.verbose,
       queue,
       report: flags['report'] ?? process.env.SPECBANDIT_REPORT ?? null,
@@ -236,7 +236,7 @@ Push options:
   --key KEY              Redis queue key (required, or set SPECBANDIT_KEY)
   --pattern PATTERN      Glob pattern for file discovery (e.g. 'src/**/*.test.ts')
   --redis-url URL        Redis URL (default: redis://localhost:6379)
-  --ttl SECONDS          TTL for all Redis keys (default: 604800 / 1 week)
+  --key-ttl SECONDS      TTL for all Redis keys (default: 604800 / 1 week)
 
 Work options:
   --key KEY              Redis queue key (required, or set SPECBANDIT_KEY)
@@ -252,7 +252,7 @@ Work options:
   --redis-url URL        Redis URL (default: redis://localhost:6379)
   --key-rerun KEY        Per-runner rerun key for re-run support
   --key-failed KEY       Redis key to store failed test file paths for later review
-  --ttl SECONDS          TTL for all Redis keys (default: 604800 / 1 week)
+  --key-ttl SECONDS      TTL for all Redis keys (default: 604800 / 1 week)
   --verbose              Show per-batch file list and full command output
   --report PATH          Write JSON report with statistics to file
 
@@ -273,7 +273,7 @@ Environment variables:
   SPECBANDIT_BATCH_SIZE       Batch size
   SPECBANDIT_KEY_RERUN        Per-runner rerun key
   SPECBANDIT_KEY_FAILED       Redis key for failed test files
-  SPECBANDIT_TTL              TTL for all Redis keys in seconds (default: 604800)
+  SPECBANDIT_KEY_TTL          TTL for all Redis keys in seconds (default: 604800)
   SPECBANDIT_VERBOSE          Enable verbose output (1/true/yes)
   SPECBANDIT_REPORT           Path to write JSON report file
 

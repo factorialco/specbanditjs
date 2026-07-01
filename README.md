@@ -74,7 +74,7 @@ specbandit push [options] [files...]
   --key KEY              Redis queue key (required)
   --pattern PATTERN      Glob pattern for file discovery
   --redis-url URL        Redis URL (default: redis://localhost:6379)
-  --ttl SECONDS          TTL for all Redis keys (default: 604800 / 1 week)
+  --key-ttl SECONDS      TTL for all Redis keys (default: 604800 / 1 week)
 
 specbandit work [options]
   --key KEY              Redis queue key (required)
@@ -83,7 +83,7 @@ specbandit work [options]
   --batch-size N         Files per batch (default: 5)
   --redis-url URL        Redis URL (default: redis://localhost:6379)
   --key-rerun KEY        Per-runner rerun key for re-run support (see below)
-  --ttl SECONDS          TTL for all Redis keys (default: 604800 / 1 week)
+  --key-ttl SECONDS      TTL for all Redis keys (default: 604800 / 1 week)
   --verbose              Show per-batch file list and full command output
   --json-out PATH        Write merged JSON results to file
 ```
@@ -101,7 +101,7 @@ All CLI options can be set via environment variables:
 | `SPECBANDIT_BATCH_SIZE` | Files per steal | `5` |
 | `SPECBANDIT_KEY_RERUN` | Per-runner rerun key | *(none)* |
 | `SPECBANDIT_KEY_FAILED` | Redis key for failed test files | *(none)* |
-| `SPECBANDIT_TTL` | Expiry for all Redis keys in seconds | `604800` (1 week) |
+| `SPECBANDIT_KEY_TTL` | Expiry for all Redis keys in seconds | `604800` (1 week) |
 | `SPECBANDIT_VERBOSE` | Enable verbose output (1/true/yes) | `false` |
 
 CLI flags take precedence over environment variables.

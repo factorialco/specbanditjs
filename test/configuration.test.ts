@@ -11,7 +11,7 @@ describe('Configuration', () => {
     'SPECBANDIT_COMMAND_OPTS',
     'SPECBANDIT_KEY_RERUN',
     'SPECBANDIT_KEY_FAILED',
-    'SPECBANDIT_TTL',
+    'SPECBANDIT_KEY_TTL',
     'SPECBANDIT_VERBOSE',
   ]
   let savedEnv: Record<string, string | undefined>
@@ -60,9 +60,9 @@ describe('Configuration', () => {
       expect(config.commandOpts).toEqual([])
     })
 
-    it('uses a single default ttl of 1 week', () => {
+    it('uses a single default key_ttl of 1 week', () => {
       const config = new Configuration()
-      expect(config.ttl).toBe(604_800)
+      expect(config.keyTtl).toBe(604_800)
     })
 
     it('has null key_rerun by default', () => {
@@ -112,10 +112,10 @@ describe('Configuration', () => {
       expect(config.commandOpts).toEqual(['--coverage', '--verbose'])
     })
 
-    it('reads ttl from SPECBANDIT_TTL', () => {
-      process.env.SPECBANDIT_TTL = '3600'
+    it('reads key_ttl from SPECBANDIT_KEY_TTL', () => {
+      process.env.SPECBANDIT_KEY_TTL = '3600'
       const config = new Configuration()
-      expect(config.ttl).toBe(3600)
+      expect(config.keyTtl).toBe(3600)
     })
 
     it('reads key_rerun from SPECBANDIT_KEY_RERUN', () => {
@@ -179,9 +179,9 @@ describe('Configuration', () => {
       expect(() => config.validate()).toThrow(/batch_size must be a positive integer/)
     })
 
-    it('throws when ttl is not positive', () => {
-      const config = new Configuration({ key: 'valid-key', ttl: 0 })
-      expect(() => config.validate()).toThrow(/ttl must be a positive integer/)
+    it('throws when key_ttl is not positive', () => {
+      const config = new Configuration({ key: 'valid-key', keyTtl: 0 })
+      expect(() => config.validate()).toThrow(/key_ttl must be a positive integer/)
     })
 
     it('passes when key and batch_size are valid', () => {
