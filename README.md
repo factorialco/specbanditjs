@@ -74,7 +74,7 @@ specbandit push [options] [files...]
   --key KEY              Redis queue key (required)
   --pattern PATTERN      Glob pattern for file discovery
   --redis-url URL        Redis URL (default: redis://localhost:6379)
-  --key-ttl SECONDS      TTL for the Redis key (default: 21600 / 6 hours)
+  --ttl SECONDS          TTL for all Redis keys (default: 604800 / 1 week)
 
 specbandit work [options]
   --key KEY              Redis queue key (required)
@@ -83,8 +83,7 @@ specbandit work [options]
   --batch-size N         Files per batch (default: 5)
   --redis-url URL        Redis URL (default: redis://localhost:6379)
   --key-rerun KEY        Per-runner rerun key for re-run support (see below)
-  --key-rerun-ttl SECS   TTL for rerun key (default: 604800 / 1 week)
-  --rerun                Safety flag: fail if rerun key is empty (prevents silent false passes)
+  --ttl SECONDS          TTL for all Redis keys (default: 604800 / 1 week)
   --verbose              Show per-batch file list and full command output
   --json-out PATH        Write merged JSON results to file
 ```
@@ -100,10 +99,9 @@ All CLI options can be set via environment variables:
 | `SPECBANDIT_COMMAND` | Command to run | *(required for work)* |
 | `SPECBANDIT_COMMAND_OPTS` | Space-separated command options | *(none)* |
 | `SPECBANDIT_BATCH_SIZE` | Files per steal | `5` |
-| `SPECBANDIT_KEY_TTL` | Key expiry in seconds | `21600` (6 hours) |
 | `SPECBANDIT_KEY_RERUN` | Per-runner rerun key | *(none)* |
-| `SPECBANDIT_KEY_RERUN_TTL` | Rerun key expiry in seconds | `604800` (1 week) |
-| `SPECBANDIT_RERUN` | Safety flag for reruns (1/true/yes) | `false` |
+| `SPECBANDIT_KEY_FAILED` | Redis key for failed test files | *(none)* |
+| `SPECBANDIT_TTL` | Expiry for all Redis keys in seconds | `604800` (1 week) |
 | `SPECBANDIT_VERBOSE` | Enable verbose output (1/true/yes) | `false` |
 
 CLI flags take precedence over environment variables.
@@ -190,35 +188,30 @@ specbandit work \
             --batch-size 10
 ```
 
-### Using `--rerun` to prevent silent false passes
+### The published marker prevents silent false passes
 
-If the rerun key expires (TTL) or Redis is flushed between the first run and a re-run, the worker would enter record mode, find an empty shared queue, run zero tests, and exit 0 -- a silent false pass. The `--rerun` flag prevents this by failing immediately when the rerun key is empty.
+Redis deletes a list once its last element is popped, so a **drained** queue and a
+queue that was **never published** look identical. To tell them apart, `push` sets a
+companion marker key (`<key>:published`) with the same TTL as the queue. The marker
+outlives the drained list, so `work` can trust that work really was published.
 
-Use `github.run_attempt` to automatically set `--rerun` only on re-runs:
+If the marker expires (TTL) or Redis is flushed between the first run and a re-run,
+`work` finds no marker and **fails immediately** instead of running zero tests and
+exiting 0. This replaces the old `--rerun` flag -- the protection is now automatic and
+needs no per-attempt configuration.
 
-```yaml
-    steps:
-      - uses: actions/checkout@v4
-      - run: npm ci
-      - run: |
-          npx specbandit work \
-            --key "pr-${{ github.event.number }}-${{ github.run_id }}" \
-            --key-rerun "pr-${{ github.event.number }}-${{ github.run_id }}-runner-${{ matrix.runner }}" \
-            --redis-url "${{ secrets.REDIS_URL }}" \
-            --command "npx jest" \
-            --batch-size 10
-        env:
-          SPECBANDIT_RERUN: ${{ github.run_attempt != '1' && '1' || '' }}
-```
+### How it works: the operating modes
 
-### How it works: three operating modes
+`work` reads the published marker plus the state of the shared queue and rerun key, then
+follows this truth table:
 
-| `--key-rerun` provided? | Rerun key in Redis | `--rerun` | Mode | Behavior |
-|--------------------------|-------------------|-----------|------|----------|
-| No | -- | -- | **Steal** | Original behavior. Steal from shared queue, run, done. |
-| Yes | Empty | No | **Record** | Steal from shared queue + record each batch to the rerun key. |
-| Yes | Empty | Yes | **Fail** | Exit 1 immediately. Prevents silent false passes when rerun key expired. |
-| Yes | Has data | -- | **Replay** | Ignore shared queue entirely. Re-run exactly the recorded files. |
+| Published | Shared queue | Rerun key | Result |
+|-----------|--------------|-----------|--------|
+| No | any | any | **Crash (exit 1)** -- nothing was published (never pushed, or TTL expired). |
+| Yes | empty | empty | **Ok** -- worker arriving late. Queue already drained, nothing to do (exit 0). |
+| Yes | populated | empty | **Ok. Classic run** -- steal from the shared queue, recording each batch to the rerun key when `--key-rerun` is set. |
+| Yes | empty | populated | **Ok. Classic rerun** -- replay exactly the recorded files, ignoring the shared queue. |
+| Yes | populated | populated | **Crash (exit 1)** -- weird state, refuse to run. |
 
 ### Complete GitHub Actions example with re-run support
 
@@ -254,9 +247,9 @@ jobs:
 
 ## How it works
 
-- **Push** uses `RPUSH` to append all file paths to a Redis list in a single command, then sets `EXPIRE` on the key (default: 6 hours).
+- **Push** uses `RPUSH` to append all file paths to a Redis list in a single command, then sets `EXPIRE` on the key (default: 1 week). It also sets a `<key>:published` marker with the same TTL so workers can tell a drained queue from one that was never published.
 - **Steal** uses `LPOP key count` (Redis 6.2+), which atomically pops up to N elements. No Lua scripts, no locks, no race conditions.
-- **Record** (when `--key-rerun` is set): after each steal, the batch is also `RPUSH`ed to the per-runner rerun key with its own TTL (default: 1 week).
+- **Record** (when `--key-rerun` is set): after each steal, the batch is also `RPUSH`ed to the per-runner rerun key with the same TTL.
 - **Replay** (when `--key-rerun` has data): reads all files from the rerun key via `LRANGE` (non-destructive), splits into batches, and runs them locally.
 - **Run** spawns the configured command via `child_process.spawnSync()` with file paths as arguments. No shell expansion overhead.
 - **Exit code** is 0 if every batch passed (or the queue was already empty), 1 if any batch had failures.

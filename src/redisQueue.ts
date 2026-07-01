@@ -3,6 +3,11 @@ import Redis from 'ioredis'
 const MAX_RETRIES = 3
 const BASE_DELAY_MS = 1000
 
+/** Companion marker key signalling that work was published for `key`. */
+function publishedMarkerKey(key: string): string {
+  return `${key}:published`
+}
+
 export class RedisQueue {
   readonly redis: Redis
 
@@ -51,6 +56,28 @@ export class RedisQueue {
   async length(key: string): Promise<number> {
     return this.withRetries('length', async () => {
       return this.redis.llen(key)
+    })
+  }
+
+  /**
+   * Mark that work has been published for `key` by setting a companion
+   * marker key with the given TTL. The marker outlives the shared queue
+   * list (which Redis deletes once fully drained), so workers can tell a
+   * drained queue apart from one that was never published.
+   */
+  async markPublished(key: string, ttl: number): Promise<void> {
+    await this.withRetries('markPublished', async () => {
+      await this.redis.set(publishedMarkerKey(key), '1', 'EX', ttl)
+    })
+  }
+
+  /**
+   * Returns true when work has been published for `key` (its marker exists).
+   */
+  async isPublished(key: string): Promise<boolean> {
+    return this.withRetries('isPublished', async () => {
+      const exists = await this.redis.exists(publishedMarkerKey(key))
+      return exists === 1
     })
   }
 

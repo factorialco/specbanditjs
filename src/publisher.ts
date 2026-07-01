@@ -1,10 +1,9 @@
-import fs from 'node:fs'
 import fg from 'fast-glob'
 import { RedisQueue } from './redisQueue.js'
 
 export interface PublisherOptions {
   key: string
-  keyTtl?: number
+  ttl?: number
   queue?: RedisQueue
   output?: NodeJS.WritableStream
 }
@@ -12,12 +11,12 @@ export interface PublisherOptions {
 export class Publisher {
   readonly queue: RedisQueue
   readonly key: string
-  readonly keyTtl: number
+  readonly ttl: number
   readonly output: NodeJS.WritableStream
 
   constructor(options: PublisherOptions) {
     this.key = options.key
-    this.keyTtl = options.keyTtl ?? 21_600
+    this.ttl = options.ttl ?? 604_800
     this.queue = options.queue ?? new RedisQueue()
     this.output = options.output ?? process.stdout
   }
@@ -36,8 +35,11 @@ export class Publisher {
       return 0
     }
 
-    await this.queue.push(this.key, resolved, this.keyTtl)
-    this.log(`[specbandit] Enqueued ${resolved.length} files onto key '${this.key}' (TTL: ${this.keyTtl}s).`)
+    await this.queue.push(this.key, resolved, this.ttl)
+    // Mark the key as published so workers can distinguish a drained queue
+    // (nothing to do) from one that was never published (a real error).
+    await this.queue.markPublished(this.key, this.ttl)
+    this.log(`[specbandit] Enqueued ${resolved.length} files onto key '${this.key}' (TTL: ${this.ttl}s).`)
     return resolved.length
   }
 

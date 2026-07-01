@@ -33,6 +33,8 @@ function createMockQueue() {
     steal: vi.fn().mockResolvedValue([]),
     length: vi.fn().mockResolvedValue(0),
     readAll: vi.fn().mockResolvedValue([]),
+    isPublished: vi.fn().mockResolvedValue(true),
+    markPublished: vi.fn().mockResolvedValue(undefined),
     close: vi.fn().mockResolvedValue(undefined),
     redis: {} as any,
   } as unknown as RedisQueue
@@ -138,6 +140,8 @@ describe.each([
     push: ReturnType<typeof vi.fn>
     steal: ReturnType<typeof vi.fn>
     readAll: ReturnType<typeof vi.fn>
+    length: ReturnType<typeof vi.fn>
+    isPublished: ReturnType<typeof vi.fn>
   }
   let capture: ReturnType<typeof createOutputCapture>
   const key = 'pr-123-run-456'
@@ -240,7 +244,7 @@ describe.each([
 
       fixture.failBatch(1)
 
-      const exitCode = await makeWorker({ keyFailed, keyFailedTtl: 3600 }).run()
+      const exitCode = await makeWorker({ keyFailed, ttl: 3600 }).run()
 
       expect(exitCode).toBe(1)
       expect(queue.push).toHaveBeenCalledWith(keyFailed, ['test/a.test.ts', 'test/b.test.ts'], 3600)
@@ -256,7 +260,7 @@ describe.each([
 
       fixture.failBatch(1, 2)
 
-      await makeWorker({ keyFailed, keyFailedTtl: 3600 }).run()
+      await makeWorker({ keyFailed, ttl: 3600 }).run()
 
       expect(queue.push).toHaveBeenCalledWith(keyFailed, ['test/a.test.ts'], 3600)
       expect(queue.push).toHaveBeenCalledWith(keyFailed, ['test/b.test.ts'], 3600)
@@ -268,7 +272,7 @@ describe.each([
         .mockResolvedValueOnce(['test/a.test.ts'])
         .mockResolvedValueOnce([])
 
-      await makeWorker({ keyFailed, keyFailedTtl: 3600 }).run()
+      await makeWorker({ keyFailed, ttl: 3600 }).run()
 
       expect(queue.push).not.toHaveBeenCalled()
     })
@@ -290,7 +294,7 @@ describe.each([
 
       fixture.failBatch(2)
 
-      await makeWorker({ keyFailed, keyFailedTtl: 3600, keyRerun: 'pr-123-rerun' }).run()
+      await makeWorker({ keyFailed, ttl: 3600, keyRerun: 'pr-123-rerun' }).run()
 
       // Batch 2 has 1 file (z.test.ts) with batchSize=2: batch1=[x,y], batch2=[z]
       expect(queue.push).toHaveBeenCalledWith(keyFailed, ['test/z.test.ts'], 3600)
@@ -305,10 +309,10 @@ describe.each([
       fixture.failBatch(1)
 
       const keyRerun = 'pr-123-rerun'
-      await makeWorker({ keyFailed, keyFailedTtl: 3600, keyRerun, keyRerunTtl: 604_800 }).run()
+      await makeWorker({ keyFailed, keyRerun, ttl: 3600 }).run()
 
-      // Should push to both rerun key (record) and failed key
-      expect(queue.push).toHaveBeenCalledWith(keyRerun, ['test/a.test.ts'], 604_800)
+      // Both the rerun key (record) and failed key use the single shared TTL
+      expect(queue.push).toHaveBeenCalledWith(keyRerun, ['test/a.test.ts'], 3600)
       expect(queue.push).toHaveBeenCalledWith(keyFailed, ['test/a.test.ts'], 3600)
     })
   })
@@ -328,7 +332,7 @@ describe.each([
         .mockResolvedValueOnce(['test/c.test.ts'])
         .mockResolvedValueOnce([])
 
-      const exitCode = await makeWorker({ keyRerun, keyRerunTtl: 604_800 }).run()
+      const exitCode = await makeWorker({ keyRerun, ttl: 604_800 }).run()
 
       expect(exitCode).toBe(0)
       expect(capture.getOutput()).toContain('Record mode')
@@ -345,7 +349,7 @@ describe.each([
 
       fixture.failBatch(1)
 
-      const exitCode = await makeWorker({ keyRerun, keyRerunTtl: 604_800 }).run()
+      const exitCode = await makeWorker({ keyRerun, ttl: 604_800 }).run()
 
       expect(exitCode).toBe(1)
       expect(queue.push).toHaveBeenCalledWith(keyRerun, ['test/a.test.ts'], 604_800)
@@ -364,7 +368,7 @@ describe.each([
     })
 
     it('runs files from the rerun key in batches', async () => {
-      const exitCode = await makeWorker({ keyRerun, keyRerunTtl: 604_800 }).run()
+      const exitCode = await makeWorker({ keyRerun, ttl: 604_800 }).run()
 
       expect(exitCode).toBe(0)
       // 3 files with batch_size 2 = 2 batches
@@ -376,7 +380,7 @@ describe.each([
     })
 
     it('never touches the shared queue', async () => {
-      await makeWorker({ keyRerun, keyRerunTtl: 604_800 }).run()
+      await makeWorker({ keyRerun, ttl: 604_800 }).run()
 
       expect(queue.steal).not.toHaveBeenCalled()
       expect(queue.push).not.toHaveBeenCalled()
@@ -385,7 +389,7 @@ describe.each([
     it('returns 1 if any replay batch fails', async () => {
       fixture.failBatch(2)
 
-      const exitCode = await makeWorker({ keyRerun, keyRerunTtl: 604_800 }).run()
+      const exitCode = await makeWorker({ keyRerun, ttl: 604_800 }).run()
 
       expect(exitCode).toBe(1)
       expect(capture.getOutput()).toContain('SOME FAILED')
@@ -550,6 +554,8 @@ describe('Worker adapter lifecycle', () => {
     push: ReturnType<typeof vi.fn>
     steal: ReturnType<typeof vi.fn>
     readAll: ReturnType<typeof vi.fn>
+    length: ReturnType<typeof vi.fn>
+    isPublished: ReturnType<typeof vi.fn>
   }
   let capture: ReturnType<typeof createOutputCapture>
   const key = 'pr-123-run-456'
@@ -635,11 +641,14 @@ describe('Worker adapter lifecycle', () => {
     expect(adapter.teardown).toHaveBeenCalledOnce()
   })
 
-  describe('rerun safety flag', () => {
+  // ── Published-marker truth table ──────────────────────────────────────
+  // See Worker.run() for the full table. These cover the rows not already
+  // exercised by the steal / record / replay suites above.
+  describe('published-marker truth table', () => {
     const keyRerun = 'pr-123-run-456-runner-3'
 
-    it('exits 1 with error when rerun=true and rerun key is empty', async () => {
-      queue.readAll.mockResolvedValue([])
+    it('crashes (exit 1) when nothing was published', async () => {
+      queue.isPublished.mockResolvedValue(false)
       const adapter = createMockAdapter()
 
       const worker = new Worker({
@@ -647,8 +656,7 @@ describe('Worker adapter lifecycle', () => {
         adapter,
         batchSize: 2,
         keyRerun,
-        keyRerunTtl: 604_800,
-        rerun: true,
+        ttl: 604_800,
         queue: queue as unknown as RedisQueue,
         output: capture.stream,
       })
@@ -656,15 +664,17 @@ describe('Worker adapter lifecycle', () => {
       const exitCode = await worker.run()
 
       expect(exitCode).toBe(1)
-      expect(capture.getOutput()).toContain('ERROR: --rerun flag is set but rerun key')
-      expect(capture.getOutput()).toContain(keyRerun)
-      expect(capture.getOutput()).toContain('Cannot replay')
+      expect(capture.getOutput()).toContain('no work published')
+      expect(capture.getOutput()).toContain(key)
+      expect(queue.readAll).not.toHaveBeenCalled()
       expect(queue.steal).not.toHaveBeenCalled()
       expect(adapter.runBatch).not.toHaveBeenCalled()
     })
 
-    it('replays normally when rerun=true and rerun key has data', async () => {
-      queue.readAll.mockResolvedValue(['test/x.test.ts', 'test/y.test.ts'])
+    it('crashes (exit 1) on the weird case: both shared queue and rerun key have data', async () => {
+      queue.isPublished.mockResolvedValue(true)
+      queue.readAll.mockResolvedValue(['test/x.test.ts'])
+      queue.length.mockResolvedValue(3) // shared queue still populated
       const adapter = createMockAdapter()
 
       const worker = new Worker({
@@ -672,24 +682,23 @@ describe('Worker adapter lifecycle', () => {
         adapter,
         batchSize: 2,
         keyRerun,
-        keyRerunTtl: 604_800,
-        rerun: true,
+        ttl: 604_800,
         queue: queue as unknown as RedisQueue,
         output: capture.stream,
       })
 
       const exitCode = await worker.run()
 
-      expect(exitCode).toBe(0)
-      expect(capture.getOutput()).toContain('Replay mode: found 2 files')
+      expect(exitCode).toBe(1)
+      expect(capture.getOutput()).toContain('weird state')
       expect(queue.steal).not.toHaveBeenCalled()
+      expect(adapter.runBatch).not.toHaveBeenCalled()
     })
 
-    it('falls through to record mode when rerun=false and rerun key is empty', async () => {
-      queue.readAll.mockResolvedValue([])
-      queue.steal
-        .mockResolvedValueOnce(['test/a.test.ts'])
-        .mockResolvedValueOnce([])
+    it('exits 0 (nothing to do) when a worker arrives late: published but both keys empty', async () => {
+      queue.isPublished.mockResolvedValue(true)
+      queue.readAll.mockResolvedValue([]) // rerun key empty
+      queue.steal.mockResolvedValue([]) // shared queue already drained
       const adapter = createMockAdapter()
 
       const worker = new Worker({
@@ -697,8 +706,7 @@ describe('Worker adapter lifecycle', () => {
         adapter,
         batchSize: 2,
         keyRerun,
-        keyRerunTtl: 604_800,
-        rerun: false,
+        ttl: 604_800,
         queue: queue as unknown as RedisQueue,
         output: capture.stream,
       })
@@ -706,8 +714,8 @@ describe('Worker adapter lifecycle', () => {
       const exitCode = await worker.run()
 
       expect(exitCode).toBe(0)
-      expect(capture.getOutput()).toContain('Record mode')
-      expect(queue.steal).toHaveBeenCalled()
+      expect(capture.getOutput()).toContain('Nothing to do')
+      expect(adapter.runBatch).not.toHaveBeenCalled()
     })
   })
 

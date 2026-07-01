@@ -9,10 +9,8 @@ export interface WorkerOptions {
   adapter: Adapter
   batchSize?: number
   keyRerun?: string | null
-  keyRerunTtl?: number
   keyFailed?: string | null
-  keyFailedTtl?: number
-  rerun?: boolean
+  ttl?: number
   verbose?: boolean
   queue?: RedisQueue
   output?: NodeJS.WritableStream
@@ -29,10 +27,8 @@ export interface WorkerOptionsLegacy {
   commandOpts?: string[]
   batchSize?: number
   keyRerun?: string | null
-  keyRerunTtl?: number
   keyFailed?: string | null
-  keyFailedTtl?: number
-  rerun?: boolean
+  ttl?: number
   verbose?: boolean
   queue?: RedisQueue
   output?: NodeJS.WritableStream
@@ -45,10 +41,8 @@ export class Worker {
   readonly adapter: Adapter
   readonly batchSize: number
   readonly keyRerun: string | null
-  readonly keyRerunTtl: number
   readonly keyFailed: string | null
-  readonly keyFailedTtl: number
-  readonly rerun: boolean
+  readonly ttl: number
   readonly verbose: boolean
   readonly output: NodeJS.WritableStream
   readonly report: string | null
@@ -60,10 +54,8 @@ export class Worker {
     this.key = options.key
     this.batchSize = options.batchSize ?? 5
     this.keyRerun = options.keyRerun ?? null
-    this.keyRerunTtl = options.keyRerunTtl ?? 604_800
     this.keyFailed = options.keyFailed ?? null
-    this.keyFailedTtl = options.keyFailedTtl ?? 604_800
-    this.rerun = options.rerun ?? false
+    this.ttl = options.ttl ?? 604_800
     this.verbose = options.verbose ?? false
     this.queue = options.queue ?? new RedisQueue()
     this.output = options.output ?? process.stdout
@@ -81,9 +73,21 @@ export class Worker {
   }
 
   /**
-   * Main entry point. Detects the operating mode and dispatches accordingly.
+   * Main entry point. Detects the operating mode from the published marker
+   * and the state of the shared queue / rerun keys, then dispatches.
    *
-   * Returns 0 if all batches passed (or nothing to do), 1 if any batch failed.
+   * The decision follows this truth table (all "empty" states are
+   * indistinguishable in Redis, which is why the published marker exists):
+   *
+   *   Published | Shared queue | Rerun key | Result
+   *   ----------|--------------|-----------|-------------------------------
+   *   No        | any          | any       | Crash — nothing was published
+   *   Yes       | empty        | empty     | Ok — worker arriving late
+   *   Yes       | populated    | empty     | Ok — classic run (steal + record)
+   *   Yes       | empty        | populated | Ok — classic rerun (replay)
+   *   Yes       | populated    | populated | Crash — weird state, refuse
+   *
+   * Returns 0 if all batches passed (or nothing to do), 1 on failure or crash.
    */
   async run(): Promise<number> {
     await this.adapter.setup()
@@ -92,18 +96,26 @@ export class Worker {
     let exitCode: number
 
     try {
-      if (this.keyRerun) {
-        const rerunFiles = await this.queue.readAll(this.keyRerun)
-        if (rerunFiles.length > 0) {
-          exitCode = await this.runReplay(rerunFiles)
-        } else if (this.rerun) {
-          this.log(`ERROR: --rerun flag is set but rerun key '${this.keyRerun}' is empty. The rerun key may have expired (TTL) or Redis was flushed. Cannot replay — failing to prevent silent false pass.`)
+      const published = await this.queue.isPublished(this.key)
+      if (!published) {
+        this.log(`[specbandit] ERROR: no work published for key '${this.key}'. Run 'specbandit push' first, or the publish marker expired (TTL).`)
+        return 1
+      }
+
+      const rerunFiles = this.keyRerun ? await this.queue.readAll(this.keyRerun) : []
+
+      if (rerunFiles.length > 0) {
+        const queueLen = await this.queue.length(this.key)
+        if (queueLen > 0) {
+          this.log(`[specbandit] ERROR: weird state — shared queue '${this.key}' (${queueLen} files) and rerun key '${this.keyRerun}' (${rerunFiles.length} files) both have data. Refusing to run.`)
           return 1
-        } else {
-          exitCode = await this.runSteal(true)
         }
+        exitCode = await this.runReplay(rerunFiles)
       } else {
-        exitCode = await this.runSteal(false)
+        // No rerun data: steal from the shared queue, recording each batch to
+        // the rerun key when one is configured. Handles both the classic run
+        // and a worker arriving after the queue was drained (nothing to do).
+        exitCode = await this.runSteal(Boolean(this.keyRerun))
       }
 
       if (this.batchResults.length > 0) {
@@ -181,7 +193,7 @@ export class Worker {
 
       // Record the stolen batch so this runner can replay on re-run
       if (record && this.keyRerun) {
-        await this.queue.push(this.keyRerun, files, this.keyRerunTtl)
+        await this.queue.push(this.keyRerun, files, this.ttl)
       }
 
       batchNum++
@@ -218,7 +230,7 @@ export class Worker {
   private async recordFailed(result: BatchResult): Promise<void> {
     if (this.keyFailed) {
       const files = result.failedFiles ?? result.files
-      await this.queue.push(this.keyFailed, files, this.keyFailedTtl)
+      await this.queue.push(this.keyFailed, files, this.ttl)
     }
   }
 

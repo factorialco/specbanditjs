@@ -9,6 +9,8 @@ describe('RedisQueue', () => {
     call: ReturnType<typeof vi.fn>
     llen: ReturnType<typeof vi.fn>
     lrange: ReturnType<typeof vi.fn>
+    set: ReturnType<typeof vi.fn>
+    exists: ReturnType<typeof vi.fn>
     quit: ReturnType<typeof vi.fn>
   }
 
@@ -22,6 +24,8 @@ describe('RedisQueue', () => {
       call: vi.fn(),
       llen: vi.fn(),
       lrange: vi.fn(),
+      set: vi.fn(),
+      exists: vi.fn(),
       quit: vi.fn(),
     }
 
@@ -126,6 +130,34 @@ describe('RedisQueue', () => {
 
       const result = await queue.readAll('missing-key')
       expect(result).toEqual([])
+    })
+  })
+
+  describe('#markPublished', () => {
+    it('sets the published marker key with a TTL via SET EX', async () => {
+      mockRedis.set.mockResolvedValue('OK')
+
+      await queue.markPublished('my-key', 3600)
+
+      expect(mockRedis.set).toHaveBeenCalledWith('my-key:published', '1', 'EX', 3600)
+    })
+  })
+
+  describe('#isPublished', () => {
+    it('returns true when the marker key exists', async () => {
+      mockRedis.exists.mockResolvedValue(1)
+
+      const result = await queue.isPublished('my-key')
+
+      expect(mockRedis.exists).toHaveBeenCalledWith('my-key:published')
+      expect(result).toBe(true)
+    })
+
+    it('returns false when the marker key does not exist', async () => {
+      mockRedis.exists.mockResolvedValue(0)
+
+      const result = await queue.isPublished('my-key')
+      expect(result).toBe(false)
     })
   })
 
