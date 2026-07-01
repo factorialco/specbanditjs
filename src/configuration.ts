@@ -13,19 +13,15 @@ export interface ConfigurationOptions {
   key?: string | null
   command?: string | null
   commandOpts?: string[]
-  keyTtl?: number
   keyRerun?: string | null
-  keyRerunTtl?: number
   keyFailed?: string | null
-  keyFailedTtl?: number
-  rerun?: boolean
+  keyTtl?: number
   verbose?: boolean
 }
 
 const DEFAULT_REDIS_URL = 'redis://localhost:6379'
 const DEFAULT_BATCH_SIZE = 5
-const DEFAULT_KEY_TTL = 21_600 // 6 hours in seconds
-const DEFAULT_KEY_RERUN_TTL = 604_800 // 1 week in seconds
+const DEFAULT_KEY_TTL = 604_800 // 1 week in seconds
 
 function envTruthy(name: string): boolean {
   const val = process.env[name]?.toLowerCase() ?? ''
@@ -43,12 +39,9 @@ export class Configuration {
   key: string | null
   command: string | null
   commandOpts: string[]
-  keyTtl: number
   keyRerun: string | null
-  keyRerunTtl: number
   keyFailed: string | null
-  keyFailedTtl: number
-  rerun: boolean
+  keyTtl: number
   verbose: boolean
 
   constructor(options: ConfigurationOptions = {}) {
@@ -57,12 +50,9 @@ export class Configuration {
     this.key = options.key ?? process.env.SPECBANDIT_KEY ?? null
     this.command = options.command ?? process.env.SPECBANDIT_COMMAND ?? null
     this.commandOpts = options.commandOpts ?? parseCommandOpts(process.env.SPECBANDIT_COMMAND_OPTS)
-    this.keyTtl = options.keyTtl ?? parseInt(process.env.SPECBANDIT_KEY_TTL ?? String(DEFAULT_KEY_TTL), 10)
     this.keyRerun = options.keyRerun ?? process.env.SPECBANDIT_KEY_RERUN ?? null
-    this.keyRerunTtl = options.keyRerunTtl ?? parseInt(process.env.SPECBANDIT_KEY_RERUN_TTL ?? String(DEFAULT_KEY_RERUN_TTL), 10)
     this.keyFailed = options.keyFailed ?? process.env.SPECBANDIT_KEY_FAILED ?? null
-    this.keyFailedTtl = options.keyFailedTtl ?? parseInt(process.env.SPECBANDIT_KEY_FAILED_TTL ?? String(DEFAULT_KEY_RERUN_TTL), 10)
-    this.rerun = options.rerun ?? envTruthy('SPECBANDIT_RERUN')
+    this.keyTtl = options.keyTtl ?? parseInt(process.env.SPECBANDIT_KEY_TTL ?? String(DEFAULT_KEY_TTL), 10)
     this.verbose = options.verbose ?? envTruthy('SPECBANDIT_VERBOSE')
   }
 
@@ -75,12 +65,6 @@ export class Configuration {
     }
     if (!Number.isInteger(this.keyTtl) || this.keyTtl <= 0) {
       throw new SpecbanditError('key_ttl must be a positive integer')
-    }
-    if (!Number.isInteger(this.keyRerunTtl) || this.keyRerunTtl <= 0) {
-      throw new SpecbanditError('key_rerun_ttl must be a positive integer')
-    }
-    if (this.rerun && !this.keyRerun) {
-      throw new SpecbanditError('--rerun requires --key-rerun to be set')
     }
   }
 

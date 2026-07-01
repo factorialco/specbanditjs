@@ -24,7 +24,7 @@ function parseArgs(argv: string[]): { flags: Record<string, string>; positional:
     if (arg.startsWith('--')) {
       const key = arg.slice(2)
       // Boolean flags
-      if (key === 'verbose' || key === 'help' || key === 'rerun') {
+      if (key === 'verbose' || key === 'help') {
         flags[key] = 'true'
         i++
         continue
@@ -63,7 +63,7 @@ Options:
   --key KEY            Redis queue key (required, or set SPECBANDIT_KEY)
   --pattern PATTERN    Glob pattern for file discovery (e.g. 'src/**/*.test.ts')
   --redis-url URL      Redis URL (default: redis://localhost:6379)
-  --key-ttl SECONDS    TTL for the Redis key (default: 21600 / 6 hours)
+  --key-ttl SECONDS    TTL for all Redis keys (default: 604800 / 1 week)
   -h, --help           Show this help`)
     return 0
   }
@@ -156,10 +156,8 @@ Options:
   --batch-size N         Files per batch (default: 5)
   --redis-url URL        Redis URL (default: redis://localhost:6379)
   --key-rerun KEY        Per-runner rerun key for re-run support
-   --key-rerun-ttl SECS   TTL for rerun key (default: 604800 / 1 week)
   --key-failed KEY       Redis key to store failed test file paths for later review
-  --key-failed-ttl SECS  TTL for failed key (default: 604800 / 1 week)
-  --rerun                Safety flag: fail if rerun key is empty (prevents silent false passes)
+  --key-ttl SECONDS      TTL for all Redis keys (default: 604800 / 1 week)
   --verbose              Show per-batch file list and full command output
   --report PATH          Write JSON report with statistics to file
   -h, --help             Show this help
@@ -191,10 +189,8 @@ Adapters:
     batchSize: flags['batch-size'] ? parseInt(flags['batch-size'], 10) : undefined,
     redisUrl: flags['redis-url'],
     keyRerun: flags['key-rerun'],
-    keyRerunTtl: flags['key-rerun-ttl'] ? parseInt(flags['key-rerun-ttl'], 10) : undefined,
     keyFailed: flags['key-failed'],
-    keyFailedTtl: flags['key-failed-ttl'] ? parseInt(flags['key-failed-ttl'], 10) : undefined,
-    rerun: flags.rerun === 'true' ? true : undefined,
+    keyTtl: flags['key-ttl'] ? parseInt(flags['key-ttl'], 10) : undefined,
     verbose: flags.verbose === 'true' ? true : undefined,
   })
 
@@ -216,10 +212,8 @@ Adapters:
       adapter,
       batchSize: config.batchSize,
       keyRerun: config.keyRerun,
-      keyRerunTtl: config.keyRerunTtl,
       keyFailed: config.keyFailed,
-      keyFailedTtl: config.keyFailedTtl,
-      rerun: config.rerun,
+      keyTtl: config.keyTtl,
       verbose: config.verbose,
       queue,
       report: flags['report'] ?? process.env.SPECBANDIT_REPORT ?? null,
@@ -242,7 +236,7 @@ Push options:
   --key KEY              Redis queue key (required, or set SPECBANDIT_KEY)
   --pattern PATTERN      Glob pattern for file discovery (e.g. 'src/**/*.test.ts')
   --redis-url URL        Redis URL (default: redis://localhost:6379)
-  --key-ttl SECONDS      TTL for the Redis key (default: 21600 / 6 hours)
+  --key-ttl SECONDS      TTL for all Redis keys (default: 604800 / 1 week)
 
 Work options:
   --key KEY              Redis queue key (required, or set SPECBANDIT_KEY)
@@ -257,10 +251,8 @@ Work options:
   --batch-size N         Files per batch (default: 5, or set SPECBANDIT_BATCH_SIZE)
   --redis-url URL        Redis URL (default: redis://localhost:6379)
   --key-rerun KEY        Per-runner rerun key for re-run support
-  --key-rerun-ttl N      TTL for rerun key (default: 604800 / 1 week)
   --key-failed KEY       Redis key to store failed test file paths for later review
-  --key-failed-ttl N     TTL for failed key (default: 604800 / 1 week)
-  --rerun                Safety flag: fail if rerun key is empty
+  --key-ttl SECONDS      TTL for all Redis keys (default: 604800 / 1 week)
   --verbose              Show per-batch file list and full command output
   --report PATH          Write JSON report with statistics to file
 
@@ -279,12 +271,9 @@ Environment variables:
   SPECBANDIT_CYPRESS_TESTING_TYPE  Testing type: e2e or component (cypress adapter)
   SPECBANDIT_PROJECT_ROOT     Project root (jest/cypress adapters)
   SPECBANDIT_BATCH_SIZE       Batch size
-  SPECBANDIT_KEY_TTL          Key TTL in seconds (default: 21600)
   SPECBANDIT_KEY_RERUN        Per-runner rerun key
-  SPECBANDIT_KEY_RERUN_TTL    Rerun key TTL in seconds (default: 604800)
   SPECBANDIT_KEY_FAILED       Redis key for failed test files
-  SPECBANDIT_KEY_FAILED_TTL   Failed key TTL in seconds (default: 604800)
-  SPECBANDIT_RERUN            Safety flag for reruns (1/true/yes)
+  SPECBANDIT_KEY_TTL          TTL for all Redis keys in seconds (default: 604800)
   SPECBANDIT_VERBOSE          Enable verbose output (1/true/yes)
   SPECBANDIT_REPORT           Path to write JSON report file
 

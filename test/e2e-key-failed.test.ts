@@ -30,6 +30,8 @@ function createMockQueue() {
     steal: vi.fn().mockResolvedValue([]),
     length: vi.fn().mockResolvedValue(0),
     readAll: vi.fn().mockResolvedValue([]),
+    isPublished: vi.fn().mockResolvedValue(true),
+    markPublished: vi.fn().mockResolvedValue(undefined),
     close: vi.fn().mockResolvedValue(undefined),
     redis: {} as any,
   } as unknown as RedisQueue
@@ -65,7 +67,7 @@ describe('E2E: --key-failed', () => {
       adapter,
       batchSize: 2,
       keyFailed,
-      keyFailedTtl: 7200,
+      keyTtl: 7200,
       queue: queue as unknown as RedisQueue,
       output: capture.stream,
     })
@@ -106,7 +108,7 @@ describe('E2E: --key-failed', () => {
       adapter,
       batchSize: 2,
       keyFailed,
-      keyFailedTtl: 7200,
+      keyTtl: 7200,
       queue: queue as unknown as RedisQueue,
       output: capture.stream,
     })
@@ -137,7 +139,7 @@ describe('E2E: --key-failed', () => {
       adapter,
       batchSize: 1,
       keyFailed,
-      keyFailedTtl: 7200,
+      keyTtl: 7200,
       queue: queue as unknown as RedisQueue,
       output: capture.stream,
     })
@@ -166,9 +168,8 @@ describe('E2E: --key-failed', () => {
       adapter,
       batchSize: 2,
       keyRerun,
-      keyRerunTtl: 604_800,
       keyFailed,
-      keyFailedTtl: 7200,
+      keyTtl: 7200,
       queue: queue as unknown as RedisQueue,
       output: capture.stream,
     })
@@ -198,9 +199,8 @@ describe('E2E: --key-failed', () => {
       adapter,
       batchSize: 2,
       keyRerun,
-      keyRerunTtl: 604_800,
       keyFailed,
-      keyFailedTtl: 7200,
+      keyTtl: 7200,
       queue: queue as unknown as RedisQueue,
       output: capture.stream,
     })
@@ -210,12 +210,12 @@ describe('E2E: --key-failed', () => {
     expect(exitCode).toBe(1)
     expect(capture.getOutput()).toContain('Record mode')
 
-    // Pushed to rerun key (record) and to failed key
-    expect(queue.push).toHaveBeenCalledWith(keyRerun, ['spec/a_spec.rb'], 604_800)
+    // Pushed to rerun key (record) and to failed key — both use the single TTL
+    expect(queue.push).toHaveBeenCalledWith(keyRerun, ['spec/a_spec.rb'], 7200)
     expect(queue.push).toHaveBeenCalledWith(keyFailed, ['spec/a_spec.rb'], 7200)
   })
 
-  it('uses default TTL of 1 week when keyFailedTtl is not specified', async () => {
+  it('uses default TTL of 1 week when ttl is not specified', async () => {
     const adapter = new CliAdapter({ command: 'false' })
 
     queue.steal
@@ -227,7 +227,7 @@ describe('E2E: --key-failed', () => {
       adapter,
       batchSize: 2,
       keyFailed,
-      // keyFailedTtl not set — should default to 604_800
+      // ttl not set — should default to 604_800
       queue: queue as unknown as RedisQueue,
       output: capture.stream,
     })
@@ -296,7 +296,7 @@ describe('E2E: --key-failed with per-file failedFiles', () => {
       adapter,
       batchSize: 3,
       keyFailed,
-      keyFailedTtl: 7200,
+      keyTtl: 7200,
       queue: queue as unknown as RedisQueue,
       output: capture.stream,
     })
@@ -324,7 +324,7 @@ describe('E2E: --key-failed with per-file failedFiles', () => {
       adapter,
       batchSize: 4,
       keyFailed,
-      keyFailedTtl: 7200,
+      keyTtl: 7200,
       queue: queue as unknown as RedisQueue,
       output: capture.stream,
     })
@@ -355,7 +355,7 @@ describe('E2E: --key-failed with per-file failedFiles', () => {
       adapter,
       batchSize: 3,
       keyFailed,
-      keyFailedTtl: 7200,
+      keyTtl: 7200,
       queue: queue as unknown as RedisQueue,
       output: capture.stream,
     })
@@ -391,7 +391,7 @@ describe('E2E: --key-failed with per-file failedFiles', () => {
       adapter,
       batchSize: 2,
       keyFailed,
-      keyFailedTtl: 7200,
+      keyTtl: 7200,
       queue: queue as unknown as RedisQueue,
       output: capture.stream,
     })
@@ -416,7 +416,7 @@ describe('E2E: --key-failed with per-file failedFiles', () => {
       batchSize: 3,
       keyRerun: 'e2e-run-456-rerun',
       keyFailed,
-      keyFailedTtl: 7200,
+      keyTtl: 7200,
       queue: queue as unknown as RedisQueue,
       output: capture.stream,
     })
@@ -449,7 +449,7 @@ describe('E2E: --key-failed with per-file failedFiles', () => {
       adapter,
       batchSize: 2,
       keyFailed,
-      keyFailedTtl: 7200,
+      keyTtl: 7200,
       queue: queue as unknown as RedisQueue,
       output: capture.stream,
     })

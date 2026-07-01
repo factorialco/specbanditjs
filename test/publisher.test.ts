@@ -24,13 +24,18 @@ function createMockQueue() {
     steal: vi.fn(),
     length: vi.fn(),
     readAll: vi.fn(),
+    markPublished: vi.fn().mockResolvedValue(undefined),
+    isPublished: vi.fn().mockResolvedValue(true),
     close: vi.fn(),
     redis: {} as any,
   } as unknown as RedisQueue
 }
 
 describe('Publisher', () => {
-  let queue: ReturnType<typeof createMockQueue> & { push: ReturnType<typeof vi.fn> }
+  let queue: ReturnType<typeof createMockQueue> & {
+    push: ReturnType<typeof vi.fn>
+    markPublished: ReturnType<typeof vi.fn>
+  }
   let capture: ReturnType<typeof createOutputCapture>
   const key = 'pr-123-run-456'
 
@@ -61,7 +66,10 @@ describe('Publisher', () => {
 
         expect(count).toBe(2)
         expect(queue.push).toHaveBeenCalledWith(key, files, 21_600)
+        expect(queue.markPublished).toHaveBeenCalledWith(key, 21_600)
         expect(capture.output.join('')).toContain('Enqueued 2 files')
+        // Redis write latency is surfaced for both operations
+        expect(capture.output.join('')).toMatch(/Redis latency: push [\d.]+ms, mark published [\d.]+ms/)
       } finally {
         Object.defineProperty(process.stdin, 'isTTY', { value: origIsTTY, configurable: true })
       }
@@ -121,6 +129,9 @@ describe('Publisher', () => {
 
         expect(count).toBe(0)
         expect(capture.output.join('')).toContain('No files to enqueue')
+        // An empty push must NOT mark the key published — workers should
+        // crash ("nothing published") rather than silently pass.
+        expect(queue.markPublished).not.toHaveBeenCalled()
       } finally {
         Object.defineProperty(process.stdin, 'isTTY', { value: origIsTTY, configurable: true })
       }

@@ -9,13 +9,10 @@ describe('Configuration', () => {
     'SPECBANDIT_KEY',
     'SPECBANDIT_COMMAND',
     'SPECBANDIT_COMMAND_OPTS',
-    'SPECBANDIT_KEY_TTL',
     'SPECBANDIT_KEY_RERUN',
-    'SPECBANDIT_KEY_RERUN_TTL',
     'SPECBANDIT_KEY_FAILED',
-    'SPECBANDIT_KEY_FAILED_TTL',
+    'SPECBANDIT_KEY_TTL',
     'SPECBANDIT_VERBOSE',
-    'SPECBANDIT_RERUN',
   ]
   let savedEnv: Record<string, string | undefined>
 
@@ -63,9 +60,9 @@ describe('Configuration', () => {
       expect(config.commandOpts).toEqual([])
     })
 
-    it('uses default key_ttl of 6 hours', () => {
+    it('uses a single default key_ttl of 1 week', () => {
       const config = new Configuration()
-      expect(config.keyTtl).toBe(21_600)
+      expect(config.keyTtl).toBe(604_800)
     })
 
     it('has null key_rerun by default', () => {
@@ -73,29 +70,14 @@ describe('Configuration', () => {
       expect(config.keyRerun).toBeNull()
     })
 
-    it('uses default key_rerun_ttl of 1 week', () => {
-      const config = new Configuration()
-      expect(config.keyRerunTtl).toBe(604_800)
-    })
-
     it('has null key_failed by default', () => {
       const config = new Configuration()
       expect(config.keyFailed).toBeNull()
     })
 
-    it('uses default key_failed_ttl of 1 week', () => {
-      const config = new Configuration()
-      expect(config.keyFailedTtl).toBe(604_800)
-    })
-
     it('has verbose false by default', () => {
       const config = new Configuration()
       expect(config.verbose).toBe(false)
-    })
-
-    it('has rerun false by default', () => {
-      const config = new Configuration()
-      expect(config.rerun).toBe(false)
     })
   })
 
@@ -142,22 +124,10 @@ describe('Configuration', () => {
       expect(config.keyRerun).toBe('pr-42-run-99-runner-3')
     })
 
-    it('reads key_rerun_ttl from SPECBANDIT_KEY_RERUN_TTL', () => {
-      process.env.SPECBANDIT_KEY_RERUN_TTL = '86400'
-      const config = new Configuration()
-      expect(config.keyRerunTtl).toBe(86_400)
-    })
-
     it('reads key_failed from SPECBANDIT_KEY_FAILED', () => {
       process.env.SPECBANDIT_KEY_FAILED = 'pr-42-failed'
       const config = new Configuration()
       expect(config.keyFailed).toBe('pr-42-failed')
-    })
-
-    it('reads key_failed_ttl from SPECBANDIT_KEY_FAILED_TTL', () => {
-      process.env.SPECBANDIT_KEY_FAILED_TTL = '86400'
-      const config = new Configuration()
-      expect(config.keyFailedTtl).toBe(86_400)
     })
 
     it('reads verbose from SPECBANDIT_VERBOSE', () => {
@@ -171,20 +141,6 @@ describe('Configuration', () => {
         process.env.SPECBANDIT_VERBOSE = val
         const config = new Configuration()
         expect(config.verbose).toBe(true)
-      }
-    })
-
-    it('reads rerun from SPECBANDIT_RERUN', () => {
-      process.env.SPECBANDIT_RERUN = '1'
-      const config = new Configuration()
-      expect(config.rerun).toBe(true)
-    })
-
-    it('accepts 1/yes/true for rerun', () => {
-      for (const val of ['1', 'yes', 'true', 'TRUE', 'Yes']) {
-        process.env.SPECBANDIT_RERUN = val
-        const config = new Configuration()
-        expect(config.rerun).toBe(true)
       }
     })
   })
@@ -226,21 +182,6 @@ describe('Configuration', () => {
     it('throws when key_ttl is not positive', () => {
       const config = new Configuration({ key: 'valid-key', keyTtl: 0 })
       expect(() => config.validate()).toThrow(/key_ttl must be a positive integer/)
-    })
-
-    it('throws when key_rerun_ttl is not positive', () => {
-      const config = new Configuration({ key: 'valid-key', keyRerunTtl: 0 })
-      expect(() => config.validate()).toThrow(/key_rerun_ttl must be a positive integer/)
-    })
-
-    it('throws when rerun is true but keyRerun is not set', () => {
-      const config = new Configuration({ key: 'valid-key', rerun: true })
-      expect(() => config.validate()).toThrow(/--rerun requires --key-rerun/)
-    })
-
-    it('passes when rerun is true and keyRerun is set', () => {
-      const config = new Configuration({ key: 'valid-key', rerun: true, keyRerun: 'some-key' })
-      expect(() => config.validate()).not.toThrow()
     })
 
     it('passes when key and batch_size are valid', () => {
