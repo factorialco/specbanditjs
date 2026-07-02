@@ -228,10 +228,17 @@ export class Worker {
   // --- Reporting helpers ---
 
   private async recordFailed(result: BatchResult): Promise<void> {
-    if (this.keyFailed) {
-      const files = result.failedFiles ?? result.files
-      await this.queue.push(this.keyFailed, files, this.keyTtl)
-    }
+    if (!this.keyFailed) return
+    // When the adapter can't name specific failing files (e.g. a suite failed
+    // to load, so numFailingTests is 0), `failedFiles` is [] — fall back to the
+    // whole batch so a failed batch always records at least one file to retry.
+    const files =
+      result.failedFiles && result.failedFiles.length > 0 ? result.failedFiles : result.files
+    await this.queue.push(this.keyFailed, files, this.keyTtl)
+    // The failed key is later consumed by a retry `work` pass, which requires a
+    // published marker (RedisQueue.isPublished). `push` alone doesn't set it, so
+    // mark it here — otherwise the retry crashes with "no work published".
+    await this.queue.markPublished(this.keyFailed, this.keyTtl)
   }
 
   private printSummary(): void {
@@ -273,7 +280,11 @@ export class Worker {
     const durations = this.batchResults.map((r) => r.duration)
     const totalFiles = this.batchResults.reduce((sum, r) => sum + r.files.length, 0)
     const failedBatches = this.batchResults.filter((r) => r.exitCode !== 0)
-    const failedFiles = failedBatches.flatMap((r) => r.failedFiles ?? r.files)
+    // Fall back to the whole batch when the adapter couldn't name failing files
+    // (`failedFiles` is [] for a suite that failed to load), mirroring recordFailed.
+    const failedFiles = failedBatches.flatMap((r) =>
+      r.failedFiles && r.failedFiles.length > 0 ? r.failedFiles : r.files
+    )
     const totalWallTime = (Date.now() - this.startTime) / 1000
 
     const merged = {

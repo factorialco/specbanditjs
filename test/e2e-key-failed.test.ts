@@ -89,6 +89,10 @@ describe('E2E: --key-failed', () => {
     )
     expect(queue.push).toHaveBeenCalledTimes(2)
 
+    // The failed key must be marked published so a later retry `work` pass
+    // (which gates on the published marker) can consume it.
+    expect(queue.markPublished).toHaveBeenCalledWith(keyFailed, 7200)
+
     const output = capture.getOutput()
     expect(output).toContain('Batch #1 FAILED')
     expect(output).toContain('Batch #2 FAILED')
@@ -117,6 +121,7 @@ describe('E2E: --key-failed', () => {
 
     expect(exitCode).toBe(0)
     expect(queue.push).not.toHaveBeenCalled()
+    expect(queue.markPublished).not.toHaveBeenCalledWith(keyFailed, expect.anything())
   })
 
   it('records only the failing batch when some pass and some fail', async () => {
@@ -428,8 +433,10 @@ describe('E2E: --key-failed with per-file failedFiles', () => {
     expect(queue.push).toHaveBeenCalledWith(keyFailed, ['test/b.test.ts'], 7200)
   })
 
-  it('does not record when failedFiles is an empty array', async () => {
-    // Edge case: exitCode=1 but failedFiles is empty (adapter bug or crash)
+  it('records the whole batch when a failed batch names no files (empty failedFiles)', async () => {
+    // Edge case: exitCode=1 but failedFiles is empty (e.g. a Jest suite failed
+    // to load, so numFailingTests is 0). Fall back to the whole batch so a real
+    // failure is never dropped from the retry queue.
     const adapter: Adapter = {
       setup: vi.fn().mockResolvedValue(undefined),
       runBatch: vi.fn().mockImplementation(
@@ -456,7 +463,9 @@ describe('E2E: --key-failed with per-file failedFiles', () => {
 
     await worker.run()
 
-    // failedFiles is empty → push is called with empty array, RedisQueue.push handles it (returns 0)
-    expect(queue.push).toHaveBeenCalledWith(keyFailed, [], 7200)
+    // Falls back to the whole batch (not []), and marks the failed key published
+    // so a later retry `work` pass can consume it.
+    expect(queue.push).toHaveBeenCalledWith(keyFailed, ['test/a.test.ts'], 7200)
+    expect(queue.markPublished).toHaveBeenCalledWith(keyFailed, 7200)
   })
 })
