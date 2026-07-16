@@ -1,6 +1,6 @@
 import { Configuration, SpecbanditError, VERSION } from './configuration.js'
 import { Publisher } from './publisher.js'
-import { RedisQueue } from './redisQueue.js'
+import { RedisQueue, type RedisQueueOptions } from './redisQueue.js'
 import { Worker } from './worker.js'
 import { CliAdapter } from './cliAdapter.js'
 import { JestAdapter } from './jestAdapter.js'
@@ -53,6 +53,16 @@ function parseArgs(argv: string[]): { flags: Record<string, string>; positional:
   return { flags, positional }
 }
 
+/** Build the ioredis resilience options from a resolved Configuration. */
+function redisOptions(config: Configuration): RedisQueueOptions {
+  return {
+    maxAttempts: config.redisMaxAttempts,
+    connectTimeout: config.redisConnectTimeout,
+    commandTimeout: config.redisCommandTimeout,
+    reconnectAttempts: config.redisReconnectAttempts,
+  }
+}
+
 async function runPush(argv: string[]): Promise<number> {
   const { flags, positional } = parseArgs(argv)
 
@@ -72,10 +82,11 @@ Options:
     key: flags.key,
     redisUrl: flags['redis-url'],
     keyTtl: flags['key-ttl'] ? parseInt(flags['key-ttl'], 10) : undefined,
+    redisMaxAttempts: flags['redis-max-attempts'] ? parseInt(flags['redis-max-attempts'], 10) : undefined,
   })
   config.validate()
 
-  const queue = new RedisQueue(config.redisUrl)
+  const queue = new RedisQueue(config.redisUrl, redisOptions(config))
   try {
     const publisher = new Publisher({
       key: config.key!,
@@ -155,6 +166,7 @@ Options:
   --project-root PATH    Project root directory (for jest/cypress adapters, default: cwd)
   --batch-size N         Files per batch (default: 5)
   --redis-url URL        Redis URL (default: redis://localhost:6379)
+  --redis-max-attempts N Redis connection retry attempts (default: 5)
   --key-rerun KEY        Per-runner rerun key for re-run support
   --key-failed KEY       Redis key to store failed test file paths for later review
   --key-ttl SECONDS      TTL for all Redis keys (default: 604800 / 1 week)
@@ -192,6 +204,7 @@ Adapters:
     keyFailed: flags['key-failed'],
     keyTtl: flags['key-ttl'] ? parseInt(flags['key-ttl'], 10) : undefined,
     verbose: flags.verbose === 'true' ? true : undefined,
+    redisMaxAttempts: flags['redis-max-attempts'] ? parseInt(flags['redis-max-attempts'], 10) : undefined,
   })
 
   // Only validate command requirement for CLI adapter
@@ -204,7 +217,7 @@ Adapters:
   }
 
   const adapter = buildAdapter(flags, config)
-  const queue = new RedisQueue(config.redisUrl)
+  const queue = new RedisQueue(config.redisUrl, redisOptions(config))
 
   try {
     const worker = new Worker({
@@ -276,6 +289,10 @@ Environment variables:
   SPECBANDIT_KEY_TTL          TTL for all Redis keys in seconds (default: 604800)
   SPECBANDIT_VERBOSE          Enable verbose output (1/true/yes)
   SPECBANDIT_REPORT           Path to write JSON report file
+  SPECBANDIT_REDIS_MAX_ATTEMPTS      Redis connection retry attempts (default: 5)
+  SPECBANDIT_REDIS_CONNECT_TIMEOUT   Redis connect timeout, seconds (default: 3)
+  SPECBANDIT_REDIS_TIMEOUT           Redis command timeout, seconds (default: 5)
+  SPECBANDIT_REDIS_RECONNECT_ATTEMPTS Redis reconnect/per-request retries (default: 3)
 
 File input priority for push:
   1. stdin (piped)     echo "test/a.test.ts" | specbandit push --key KEY

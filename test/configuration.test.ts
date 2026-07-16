@@ -13,6 +13,10 @@ describe('Configuration', () => {
     'SPECBANDIT_KEY_FAILED',
     'SPECBANDIT_KEY_TTL',
     'SPECBANDIT_VERBOSE',
+    'SPECBANDIT_REDIS_MAX_ATTEMPTS',
+    'SPECBANDIT_REDIS_CONNECT_TIMEOUT',
+    'SPECBANDIT_REDIS_TIMEOUT',
+    'SPECBANDIT_REDIS_RECONNECT_ATTEMPTS',
   ]
   let savedEnv: Record<string, string | undefined>
 
@@ -187,6 +191,33 @@ describe('Configuration', () => {
     it('passes when key and batch_size are valid', () => {
       const config = new Configuration({ key: 'valid-key', batchSize: 3 })
       expect(() => config.validate()).not.toThrow()
+    })
+  })
+
+  describe('resilience settings', () => {
+    it('has sensible resilience defaults', () => {
+      const config = new Configuration()
+      expect(config.redisMaxAttempts).toBe(5)
+      expect(config.redisConnectTimeout).toBe(3000)
+      expect(config.redisCommandTimeout).toBe(5000)
+      expect(config.redisReconnectAttempts).toBe(3)
+    })
+
+    it('reads resilience settings from the environment (timeouts in seconds → ms)', () => {
+      process.env.SPECBANDIT_REDIS_MAX_ATTEMPTS = '8'
+      process.env.SPECBANDIT_REDIS_CONNECT_TIMEOUT = '2.5'
+      process.env.SPECBANDIT_REDIS_TIMEOUT = '7'
+      process.env.SPECBANDIT_REDIS_RECONNECT_ATTEMPTS = '1'
+      const config = new Configuration()
+      expect(config.redisMaxAttempts).toBe(8)
+      expect(config.redisConnectTimeout).toBe(2500)
+      expect(config.redisCommandTimeout).toBe(7000)
+      expect(config.redisReconnectAttempts).toBe(1)
+    })
+
+    it('throws when redis_max_attempts is not positive', () => {
+      const config = new Configuration({ key: 'valid-key', redisMaxAttempts: 0 })
+      expect(() => config.validate()).toThrow(/redis_max_attempts must be a positive integer/)
     })
   })
 

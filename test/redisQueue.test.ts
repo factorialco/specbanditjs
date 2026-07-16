@@ -184,7 +184,7 @@ describe('RedisQueue', () => {
       expect(result).toBe(5)
       expect(mockRedis.llen).toHaveBeenCalledTimes(2)
       expect(warnSpy).toHaveBeenCalledTimes(1)
-      expect(warnSpy.mock.calls[0][0]).toMatch(/Redis length failed \(attempt 1\/3\)/)
+      expect(warnSpy.mock.calls[0][0]).toMatch(/Redis length failed \(attempt 1\/5\)/)
 
       warnSpy.mockRestore()
     })
@@ -209,24 +209,40 @@ describe('RedisQueue', () => {
       warnSpy.mockRestore()
     })
 
-    it('throws after exhausting all retries', async () => {
+    it('throws after exhausting all retries (default 5 attempts)', async () => {
       const error = new Error('persistent failure')
-      mockRedis.llen
-        .mockRejectedValueOnce(error)
-        .mockRejectedValueOnce(error)
-        .mockRejectedValueOnce(error)
+      mockRedis.llen.mockRejectedValue(error)
 
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
       const promise = queue.length('my-key').catch((e: Error) => e)
+      // Capped exponential backoff between the 5 attempts: 1s, 2s, 4s, 8s.
       await vi.advanceTimersByTimeAsync(1000)
       await vi.advanceTimersByTimeAsync(2000)
+      await vi.advanceTimersByTimeAsync(4000)
+      await vi.advanceTimersByTimeAsync(8000)
 
       const result = await promise
       expect(result).toBeInstanceOf(Error)
       expect((result as Error).message).toBe('persistent failure')
-      expect(mockRedis.llen).toHaveBeenCalledTimes(3)
-      expect(warnSpy).toHaveBeenCalledTimes(2)
+      expect(mockRedis.llen).toHaveBeenCalledTimes(5)
+      expect(warnSpy).toHaveBeenCalledTimes(4)
+
+      warnSpy.mockRestore()
+    })
+
+    it('honours a custom maxAttempts', async () => {
+      const q = new RedisQueue('redis://localhost:6379', { maxAttempts: 2 })
+      const local = { llen: vi.fn().mockRejectedValue(new Error('down')) }
+      ;(q as any).redis = local
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      const promise = q.length('my-key').catch((e: Error) => e)
+      await vi.advanceTimersByTimeAsync(1000)
+
+      const result = await promise
+      expect(result).toBeInstanceOf(Error)
+      expect(local.llen).toHaveBeenCalledTimes(2)
 
       warnSpy.mockRestore()
     })
