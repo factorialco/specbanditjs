@@ -1,7 +1,25 @@
 import Redis from 'ioredis'
 
-const MAX_RETRIES = 3
+const DEFAULT_MAX_RETRIES = 5
 const BASE_DELAY_MS = 1000
+// Cap the exponential backoff so a real outage degrades/fails within a bounded
+// window instead of sleeping for minutes on the last attempts.
+const MAX_BACKOFF_MS = 10_000
+
+const DEFAULT_CONNECT_TIMEOUT_MS = 3000
+const DEFAULT_COMMAND_TIMEOUT_MS = 5000
+const DEFAULT_RECONNECT_ATTEMPTS = 3
+
+export interface RedisQueueOptions {
+  /** Application-level retry attempts on a connection failure. */
+  maxAttempts?: number
+  /** ioredis connect timeout, in milliseconds. */
+  connectTimeout?: number
+  /** ioredis per-command timeout, in milliseconds. */
+  commandTimeout?: number
+  /** ioredis reconnect / per-request retry budget. */
+  reconnectAttempts?: number
+}
 
 /** Companion marker key signalling that work was published for `key`. */
 function publishedMarkerKey(key: string): string {
@@ -10,11 +28,19 @@ function publishedMarkerKey(key: string): string {
 
 export class RedisQueue {
   readonly redis: Redis
+  private readonly maxAttempts: number
 
-  constructor(redisUrl: string = 'redis://localhost:6379') {
+  constructor(redisUrl: string = 'redis://localhost:6379', options: RedisQueueOptions = {}) {
+    this.maxAttempts = options.maxAttempts ?? DEFAULT_MAX_RETRIES
+    const reconnectAttempts = options.reconnectAttempts ?? DEFAULT_RECONNECT_ATTEMPTS
     this.redis = new Redis(redisUrl, {
       lazyConnect: true,
-      maxRetriesPerRequest: 3,
+      connectTimeout: options.connectTimeout ?? DEFAULT_CONNECT_TIMEOUT_MS,
+      commandTimeout: options.commandTimeout ?? DEFAULT_COMMAND_TIMEOUT_MS,
+      maxRetriesPerRequest: reconnectAttempts,
+      // Bounded reconnection backoff; give up (null) after the reconnect budget
+      // so a dead endpoint surfaces as an error the caller can degrade on.
+      retryStrategy: (times: number) => (times > reconnectAttempts ? null : Math.min(times * 200, 2000)),
     })
   }
 
@@ -96,13 +122,13 @@ export class RedisQueue {
   }
 
   private async withRetries<T>(operation: string, fn: () => Promise<T>): Promise<T> {
-    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    for (let attempt = 1; attempt <= this.maxAttempts; attempt++) {
       try {
         return await fn()
       } catch (error) {
-        if (attempt === MAX_RETRIES) throw error
-        const delay = BASE_DELAY_MS * Math.pow(2, attempt - 1)
-        console.warn(`[specbandit] Redis ${operation} failed (attempt ${attempt}/${MAX_RETRIES}), retrying in ${delay}ms: ${error}`)
+        if (attempt === this.maxAttempts) throw error
+        const delay = Math.min(BASE_DELAY_MS * Math.pow(2, attempt - 1), MAX_BACKOFF_MS)
+        console.warn(`[specbandit] Redis ${operation} failed (attempt ${attempt}/${this.maxAttempts}), retrying in ${delay}ms: ${error}`)
         await new Promise(resolve => setTimeout(resolve, delay))
       }
     }
