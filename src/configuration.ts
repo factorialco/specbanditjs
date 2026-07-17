@@ -21,6 +21,7 @@ export interface ConfigurationOptions {
   redisConnectTimeout?: number
   redisCommandTimeout?: number
   redisReconnectAttempts?: number
+  jestBatchTimeout?: number
 }
 
 const DEFAULT_REDIS_URL = 'redis://localhost:6379'
@@ -36,6 +37,13 @@ const DEFAULT_REDIS_MAX_ATTEMPTS = 5
 const DEFAULT_REDIS_CONNECT_TIMEOUT_S = 3
 const DEFAULT_REDIS_COMMAND_TIMEOUT_S = 5
 const DEFAULT_REDIS_RECONNECT_ATTEMPTS = 3
+
+// Jest adapter idle (no-progress) timeout. If Jest emits no output for this
+// long, the batch is treated as hung, interrupted, and reported failed.
+// Expressed in SECONDS in the env (like the Redis timeouts) and converted to
+// milliseconds for the adapter. `0` disables the check. See JestAdapter for
+// why this is a no-progress timeout rather than a total-wall-clock cap.
+const DEFAULT_JEST_BATCH_TIMEOUT_S = 600
 
 function envTruthy(name: string): boolean {
   const val = process.env[name]?.toLowerCase() ?? ''
@@ -80,6 +88,8 @@ export class Configuration {
   redisCommandTimeout: number
   /** ioredis reconnect / per-request retry budget. */
   redisReconnectAttempts: number
+  /** Jest adapter idle (no-progress) timeout, in milliseconds. 0 = disabled. */
+  jestBatchTimeout: number
 
   constructor(options: ConfigurationOptions = {}) {
     this.redisUrl = options.redisUrl ?? process.env.SPECBANDIT_REDIS_URL ?? DEFAULT_REDIS_URL
@@ -102,6 +112,9 @@ export class Configuration {
       Math.round(envFloat('SPECBANDIT_REDIS_TIMEOUT', DEFAULT_REDIS_COMMAND_TIMEOUT_S) * 1000)
     this.redisReconnectAttempts =
       options.redisReconnectAttempts ?? envInt('SPECBANDIT_REDIS_RECONNECT_ATTEMPTS', DEFAULT_REDIS_RECONNECT_ATTEMPTS)
+    this.jestBatchTimeout =
+      options.jestBatchTimeout ??
+      Math.max(0, Math.round(envFloat('SPECBANDIT_JEST_BATCH_TIMEOUT', DEFAULT_JEST_BATCH_TIMEOUT_S) * 1000))
   }
 
   validate(): void {
