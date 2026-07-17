@@ -61,7 +61,28 @@ export interface JestAdapterOptions {
    * Output stream for logging.
    */
   output?: NodeJS.WritableStream
+
+  /**
+   * Idle timeout in milliseconds. If Jest emits no output (i.e. no test
+   * file completes) for this long, the batch is treated as hung: the run
+   * is interrupted so it stops scheduling further files (and stops leaking
+   * into the next batch) and the batch is reported as failed.
+   *
+   * This is a *no-progress* timeout, not a total-wall-clock cap — a
+   * legitimately slow batch keeps resetting it as each file finishes, so a
+   * batch containing a very slow spec is no longer mis-classified as a hang.
+   *
+   * `0` disables the check. Defaults to {@link DEFAULT_BATCH_IDLE_TIMEOUT_MS}.
+   */
+  batchIdleTimeoutMs?: number
 }
+
+/**
+ * Default idle timeout: 10 minutes with zero Jest output almost certainly
+ * means a genuinely stuck run, and it stays comfortably under the CI job's
+ * own timeout while giving slow individual specs ample headroom.
+ */
+export const DEFAULT_BATCH_IDLE_TIMEOUT_MS = 600_000
 
 /**
  * Jest adapter: runs Jest programmatically with haste map reuse.
@@ -85,6 +106,7 @@ export class JestAdapter implements Adapter {
   readonly jestOpts: string[]
   readonly verbose: boolean
   readonly output: NodeJS.WritableStream
+  readonly batchIdleTimeoutMs: number
 
   // Cached from setup() — typed as `any` since these are Jest internals
   private contexts: any[] | null = null
@@ -106,6 +128,7 @@ export class JestAdapter implements Adapter {
     this.jestOpts = options.jestOpts ?? []
     this.verbose = options.verbose ?? false
     this.output = options.output ?? process.stdout
+    this.batchIdleTimeoutMs = options.batchIdleTimeoutMs ?? DEFAULT_BATCH_IDLE_TIMEOUT_MS
 
     // Create a require function rooted at the project root.
     // This ensures Jest packages are resolved from the project's node_modules,
@@ -284,27 +307,75 @@ export class JestAdapter implements Adapter {
         }>
       }
 
+      // Wrap the output stream so every write bumps a liveness timestamp.
+      // Jest's reporter writes a `PASS/FAIL <path>` line as each test file
+      // completes, so "time since last write" is a reliable no-progress
+      // signal. In verbose mode we still forward to stderr; otherwise output
+      // is discarded (as before) while the heartbeat keeps ticking.
+      const activityStream = new ActivityStream(this.verbose ? process.stderr : null)
+      const watcher = new TestWatcher({ isWatchMode: false })
+
       const result = await new Promise<RunJestResult>((resolve, reject) => {
-        // Safety timeout: if onComplete is never called (e.g. because
-        // the `exit` package killed stdout before Jest could report),
-        // resolve with a failure after 5 minutes.
-        const timeout = setTimeout(() => {
-          resolve({ success: false, testResults: [] })
-          this.log(`[specbandit:jest] Batch #${batchNum} timed out waiting for onComplete`)
-        }, 300_000)
+        let settled = false
+        let idleInterval: ReturnType<typeof setInterval> | undefined
+
+        const clearIdle = (): void => {
+          if (idleInterval) {
+            clearInterval(idleInterval)
+            idleInterval = undefined
+          }
+        }
+        const settleResolve = (value: RunJestResult): void => {
+          if (settled) return
+          settled = true
+          clearIdle()
+          resolve(value)
+        }
+        const settleReject = (err: unknown): void => {
+          if (settled) return
+          settled = true
+          clearIdle()
+          reject(err)
+        }
+
+        // Idle (no-progress) timeout. If Jest emits nothing for
+        // `batchIdleTimeoutMs`, treat the batch as hung: interrupt the run
+        // (so it stops scheduling further files and doesn't leak PASS lines
+        // into the next batch) and resolve as a failure. `0` disables it.
+        //
+        // This replaces the old blind 5-minute total-wall-clock cap, which
+        // failed a legitimately slow-but-passing batch (e.g. one containing
+        // a 160s+ integration spec) even though every test passed.
+        if (this.batchIdleTimeoutMs > 0) {
+          const pollMs = Math.min(this.batchIdleTimeoutMs, 15_000)
+          idleInterval = setInterval(() => {
+            const idleMs = performance.now() - activityStream.lastActivity
+            if (idleMs >= this.batchIdleTimeoutMs) {
+              this.log(
+                `[specbandit:jest] Batch #${batchNum}: no test activity for ${Math.round(idleMs / 1000)}s — treating batch as hung`,
+              )
+              try {
+                watcher.setState({ interrupted: true })
+              } catch {
+                // Interrupting Jest is best-effort; still report the failure.
+              }
+              settleResolve({ success: false, testResults: [] })
+            }
+          }, pollMs)
+          // The heartbeat must not keep the event loop alive by itself.
+          if (typeof idleInterval.unref === 'function') idleInterval.unref()
+        }
 
         runJest({
           contexts,
           globalConfig: batchGlobalConfig,
-          outputStream: this.verbose ? process.stderr : new NullWritable(),
-          testWatcher: new TestWatcher({ isWatchMode: false }),
+          outputStream: activityStream,
+          testWatcher: watcher,
           onComplete: (results: RunJestResult) => {
-            clearTimeout(timeout)
-            resolve(results)
+            settleResolve(results)
           },
         }).catch((err: unknown) => {
-          clearTimeout(timeout)
-          reject(err)
+          settleReject(err)
         })
       })
 
@@ -403,15 +474,29 @@ export class JestAdapter implements Adapter {
 }
 
 /**
- * A writable stream that discards all input.
- * Used to suppress Jest output when not in verbose mode.
+ * A writable stream that records the time of its last write (used as a
+ * liveness heartbeat for the idle-timeout) and optionally forwards output to
+ * a real stream. When `forwardTo` is null, output is discarded (the
+ * non-verbose case) while the heartbeat still ticks. Duck-typed — Jest's
+ * reporters only ever call `write()`.
  */
-class NullWritable {
-  write(_chunk: unknown, _encoding?: unknown, _callback?: unknown): boolean {
-    if (typeof _encoding === 'function') {
-      ;(_encoding as () => void)()
-    } else if (typeof _callback === 'function') {
-      ;(_callback as () => void)()
+class ActivityStream {
+  lastActivity: number
+  readonly isTTY = false
+
+  constructor(private readonly forwardTo: NodeJS.WritableStream | null) {
+    this.lastActivity = performance.now()
+  }
+
+  write(chunk: unknown, encoding?: unknown, callback?: unknown): boolean {
+    this.lastActivity = performance.now()
+    if (this.forwardTo) {
+      return (this.forwardTo.write as (...args: unknown[]) => boolean)(chunk, encoding, callback)
+    }
+    if (typeof encoding === 'function') {
+      ;(encoding as () => void)()
+    } else if (typeof callback === 'function') {
+      ;(callback as () => void)()
     }
     return true
   }

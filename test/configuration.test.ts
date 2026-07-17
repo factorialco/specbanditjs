@@ -17,6 +17,7 @@ describe('Configuration', () => {
     'SPECBANDIT_REDIS_CONNECT_TIMEOUT',
     'SPECBANDIT_REDIS_TIMEOUT',
     'SPECBANDIT_REDIS_RECONNECT_ATTEMPTS',
+    'SPECBANDIT_JEST_BATCH_TIMEOUT',
   ]
   let savedEnv: Record<string, string | undefined>
 
@@ -218,6 +219,37 @@ describe('Configuration', () => {
     it('throws when redis_max_attempts is not positive', () => {
       const config = new Configuration({ key: 'valid-key', redisMaxAttempts: 0 })
       expect(() => config.validate()).toThrow(/redis_max_attempts must be a positive integer/)
+    })
+  })
+
+  describe('jest batch timeout', () => {
+    it('defaults to 600 seconds (600000 ms)', () => {
+      const config = new Configuration()
+      expect(config.jestBatchTimeout).toBe(600_000)
+    })
+
+    it('reads SPECBANDIT_JEST_BATCH_TIMEOUT from the environment (seconds → ms)', () => {
+      process.env.SPECBANDIT_JEST_BATCH_TIMEOUT = '90'
+      const config = new Configuration()
+      expect(config.jestBatchTimeout).toBe(90_000)
+    })
+
+    it('supports 0 to disable the timeout', () => {
+      process.env.SPECBANDIT_JEST_BATCH_TIMEOUT = '0'
+      const config = new Configuration()
+      expect(config.jestBatchTimeout).toBe(0)
+    })
+
+    it('clamps negative values to 0 (disabled) rather than firing immediately', () => {
+      process.env.SPECBANDIT_JEST_BATCH_TIMEOUT = '-5'
+      const config = new Configuration()
+      expect(config.jestBatchTimeout).toBe(0)
+    })
+
+    it('prefers an explicit option over the environment', () => {
+      process.env.SPECBANDIT_JEST_BATCH_TIMEOUT = '90'
+      const config = new Configuration({ jestBatchTimeout: 12_345 })
+      expect(config.jestBatchTimeout).toBe(12_345)
     })
   })
 

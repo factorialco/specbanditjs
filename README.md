@@ -103,6 +103,7 @@ All CLI options can be set via environment variables:
 | `SPECBANDIT_KEY_FAILED` | Redis key for failed test files | *(none)* |
 | `SPECBANDIT_KEY_TTL` | Expiry for all Redis keys in seconds | `604800` (1 week) |
 | `SPECBANDIT_VERBOSE` | Enable verbose output (1/true/yes) | `false` |
+| `SPECBANDIT_JEST_BATCH_TIMEOUT` | Jest adapter idle (no-progress) timeout in seconds; a batch with no Jest output for this long is treated as hung and failed. `0` disables it. | `600` |
 
 CLI flags take precedence over environment variables.
 

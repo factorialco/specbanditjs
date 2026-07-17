@@ -117,13 +117,22 @@ function buildAdapter(flags: Record<string, string>, config: Configuration): Ada
   const adapterType = (flags.adapter ?? process.env.SPECBANDIT_ADAPTER ?? 'cli').toLowerCase()
 
   switch (adapterType) {
-    case 'jest':
+    case 'jest': {
+      // --jest-batch-timeout is given in seconds (like the env var) and
+      // overrides SPECBANDIT_JEST_BATCH_TIMEOUT / the default when present.
+      const batchTimeoutFlag = flags['jest-batch-timeout']
+      const batchIdleTimeoutMs =
+        batchTimeoutFlag !== undefined && batchTimeoutFlag !== ''
+          ? Math.max(0, Math.round(parseFloat(batchTimeoutFlag) * 1000))
+          : config.jestBatchTimeout
       return new JestAdapter({
         jestConfig: flags['jest-config'] ?? process.env.SPECBANDIT_JEST_CONFIG,
         projectRoot: flags['project-root'] ?? process.env.SPECBANDIT_PROJECT_ROOT,
         jestOpts: config.commandOpts, // Reuse commandOpts as jestOpts
         verbose: config.verbose,
+        batchIdleTimeoutMs: Number.isNaN(batchIdleTimeoutMs) ? config.jestBatchTimeout : batchIdleTimeoutMs,
       })
+    }
 
     case 'cypress':
       return new CypressAdapter({
@@ -160,6 +169,10 @@ Options:
   --command CMD          Command to run with file paths (required for cli adapter)
   --command-opts OPTS    Extra options forwarded to the command/jest (space-separated)
   --jest-config PATH     Path to jest config file (for jest adapter)
+  --jest-batch-timeout S Idle (no-progress) timeout in seconds for the jest
+                         adapter; a batch with no Jest output for this long is
+                         treated as hung and failed. 0 disables. Default: 600
+                         (or SPECBANDIT_JEST_BATCH_TIMEOUT)
   --cypress-config PATH  Path to cypress config file (for cypress adapter)
   --cypress-browser B    Browser to use (for cypress adapter, e.g. chrome, firefox)
   --cypress-testing-type Testing type: 'e2e' (default) or 'component' (for cypress adapter)
@@ -257,6 +270,10 @@ Work options:
   --command CMD          Command to run with file paths (required for cli adapter)
   --command-opts OPTS    Extra options forwarded to the command/jest (space-separated)
   --jest-config PATH     Path to jest config file (for jest adapter)
+  --jest-batch-timeout S Idle (no-progress) timeout in seconds for the jest
+                         adapter; a batch with no Jest output for this long is
+                         treated as hung and failed. 0 disables. Default: 600
+                         (or SPECBANDIT_JEST_BATCH_TIMEOUT)
   --cypress-config PATH  Path to cypress config file (for cypress adapter)
   --cypress-browser B    Browser to use (for cypress adapter, e.g. chrome, firefox)
   --cypress-testing-type Testing type: 'e2e' (default) or 'component' (for cypress adapter)
@@ -279,6 +296,7 @@ Environment variables:
   SPECBANDIT_COMMAND          Command to run (cli adapter)
   SPECBANDIT_COMMAND_OPTS     Command/jest options (space-separated)
   SPECBANDIT_JEST_CONFIG      Jest config path (jest adapter)
+  SPECBANDIT_JEST_BATCH_TIMEOUT  Jest idle (no-progress) timeout, seconds; 0 disables (default: 600)
   SPECBANDIT_CYPRESS_CONFIG   Cypress config path (cypress adapter)
   SPECBANDIT_CYPRESS_BROWSER  Browser name (cypress adapter)
   SPECBANDIT_CYPRESS_TESTING_TYPE  Testing type: e2e or component (cypress adapter)
