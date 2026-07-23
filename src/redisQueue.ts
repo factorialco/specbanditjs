@@ -117,8 +117,19 @@ export class RedisQueue {
     })
   }
 
+  /**
+   * Close the connection without ever throwing. QUIT is a regular command,
+   * so during an outage it hits commandTimeout and rejects — and close()
+   * runs in exit paths (finally blocks), where a throw masks the real error
+   * or crashes an otherwise-green run. Fall back to a hard disconnect,
+   * which drops the socket and pending commands without a round-trip.
+   */
   async close(): Promise<void> {
-    await this.redis.quit()
+    try {
+      await this.redis.quit()
+    } catch {
+      this.redis.disconnect()
+    }
   }
 
   private async withRetries<T>(operation: string, fn: () => Promise<T>): Promise<T> {
@@ -126,7 +137,10 @@ export class RedisQueue {
       try {
         return await fn()
       } catch (error) {
-        if (attempt === this.maxAttempts) throw error
+        if (attempt === this.maxAttempts) {
+          const message = error instanceof Error ? error.message : String(error)
+          throw new Error(`Redis ${operation} failed after ${this.maxAttempts} attempts: ${message}`)
+        }
         const delay = Math.min(BASE_DELAY_MS * Math.pow(2, attempt - 1), MAX_BACKOFF_MS)
         console.warn(`[specbandit] Redis ${operation} failed (attempt ${attempt}/${this.maxAttempts}), retrying in ${delay}ms: ${error}`)
         await new Promise(resolve => setTimeout(resolve, delay))
