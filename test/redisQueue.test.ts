@@ -12,6 +12,7 @@ describe('RedisQueue', () => {
     set: ReturnType<typeof vi.fn>
     exists: ReturnType<typeof vi.fn>
     quit: ReturnType<typeof vi.fn>
+    disconnect: ReturnType<typeof vi.fn>
   }
 
   beforeEach(() => {
@@ -27,6 +28,7 @@ describe('RedisQueue', () => {
       set: vi.fn(),
       exists: vi.fn(),
       quit: vi.fn(),
+      disconnect: vi.fn(),
     }
 
     // Replace the redis instance with our mock
@@ -224,7 +226,7 @@ describe('RedisQueue', () => {
 
       const result = await promise
       expect(result).toBeInstanceOf(Error)
-      expect((result as Error).message).toBe('persistent failure')
+      expect((result as Error).message).toBe('Redis length failed after 5 attempts: persistent failure')
       expect(mockRedis.llen).toHaveBeenCalledTimes(5)
       expect(warnSpy).toHaveBeenCalledTimes(4)
 
@@ -305,6 +307,14 @@ describe('RedisQueue', () => {
 
       await queue.close()
       expect(mockRedis.quit).toHaveBeenCalled()
+      expect(mockRedis.disconnect).not.toHaveBeenCalled()
+    })
+
+    it('falls back to disconnect and does not throw when QUIT fails', async () => {
+      mockRedis.quit.mockRejectedValue(new Error('Command timed out'))
+
+      await expect(queue.close()).resolves.toBeUndefined()
+      expect(mockRedis.disconnect).toHaveBeenCalled()
     })
   })
 })
