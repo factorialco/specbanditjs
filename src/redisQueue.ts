@@ -91,6 +91,16 @@ export class RedisQueue {
     })
   }
 
+  /**
+   * Remove a key entirely. Used to discard stale rerun memory when a
+   * full rerun starts over from the shared queue.
+   */
+  async delete(key: string): Promise<number> {
+    return this.withRetries('delete', async () => {
+      return this.redis.del(key)
+    })
+  }
+
   async close(): Promise<void> {
     await this.redis.quit()
   }

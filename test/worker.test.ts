@@ -33,6 +33,7 @@ function createMockQueue() {
     steal: vi.fn().mockResolvedValue([]),
     length: vi.fn().mockResolvedValue(0),
     readAll: vi.fn().mockResolvedValue([]),
+    delete: vi.fn().mockResolvedValue(1),
     isPublished: vi.fn().mockResolvedValue(true),
     markPublished: vi.fn().mockResolvedValue(undefined),
     close: vi.fn().mockResolvedValue(undefined),
@@ -555,6 +556,7 @@ describe('Worker adapter lifecycle', () => {
     steal: ReturnType<typeof vi.fn>
     readAll: ReturnType<typeof vi.fn>
     length: ReturnType<typeof vi.fn>
+    delete: ReturnType<typeof vi.fn>
     isPublished: ReturnType<typeof vi.fn>
   }
   let capture: ReturnType<typeof createOutputCapture>
@@ -671,28 +673,58 @@ describe('Worker adapter lifecycle', () => {
       expect(adapter.runBatch).not.toHaveBeenCalled()
     })
 
-    it('crashes (exit 1) on the weird case: both shared queue and rerun key have data', async () => {
-      queue.isPublished.mockResolvedValue(true)
-      queue.readAll.mockResolvedValue(['test/x.test.ts'])
-      queue.length.mockResolvedValue(3) // shared queue still populated
-      const adapter = createMockAdapter()
-
-      const worker = new Worker({
-        key,
-        adapter,
-        batchSize: 2,
-        keyRerun,
-        keyTtl: 604_800,
-        queue: queue as unknown as RedisQueue,
-        output: capture.stream,
+    describe('full rerun: both shared queue and rerun key have data', () => {
+      beforeEach(() => {
+        queue.isPublished.mockResolvedValue(true)
+        queue.readAll.mockResolvedValue(['test/x.test.ts']) // stale rerun memory
+        queue.length.mockResolvedValue(3) // shared queue re-pushed
+        queue.steal
+          .mockResolvedValueOnce(['test/a.test.ts', 'test/b.test.ts'])
+          .mockResolvedValueOnce([])
       })
 
-      const exitCode = await worker.run()
+      function createWorker(adapter: Adapter) {
+        return new Worker({
+          key,
+          adapter,
+          batchSize: 2,
+          keyRerun,
+          keyTtl: 604_800,
+          queue: queue as unknown as RedisQueue,
+          output: capture.stream,
+        })
+      }
 
-      expect(exitCode).toBe(1)
-      expect(capture.getOutput()).toContain('weird state')
-      expect(queue.steal).not.toHaveBeenCalled()
-      expect(adapter.runBatch).not.toHaveBeenCalled()
+      it('resets the rerun key before stealing from the shared queue', async () => {
+        const adapter = createMockAdapter()
+
+        const exitCode = await createWorker(adapter).run()
+
+        expect(exitCode).toBe(0)
+        expect(queue.delete).toHaveBeenCalledWith(keyRerun)
+        expect(queue.delete.mock.invocationCallOrder[0]).toBeLessThan(
+          queue.steal.mock.invocationCallOrder[0],
+        )
+        expect(adapter.runBatch).toHaveBeenCalledWith(['test/a.test.ts', 'test/b.test.ts'], 1)
+      })
+
+      it('re-records the stolen batches to the rerun key', async () => {
+        await createWorker(createMockAdapter()).run()
+
+        expect(queue.push).toHaveBeenCalledWith(
+          keyRerun,
+          ['test/a.test.ts', 'test/b.test.ts'],
+          604_800,
+        )
+      })
+
+      it('explains the full-rerun reset instead of crashing', async () => {
+        await createWorker(createMockAdapter()).run()
+
+        expect(capture.getOutput()).toContain('Full rerun')
+        expect(capture.getOutput()).toContain(`resetting '${keyRerun}'`)
+        expect(capture.getOutput()).not.toContain('ERROR')
+      })
     })
 
     it('exits 0 (nothing to do) when a worker arrives late: published but both keys empty', async () => {
