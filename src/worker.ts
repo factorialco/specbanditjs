@@ -85,7 +85,7 @@ export class Worker {
    *   Yes       | empty        | empty     | Ok — worker arriving late
    *   Yes       | populated    | empty     | Ok — classic run (steal + record)
    *   Yes       | empty        | populated | Ok — classic rerun (replay)
-   *   Yes       | populated    | populated | Crash — weird state, refuse
+   *   Yes       | populated    | populated | Ok — full rerun (reset rerun key, steal)
    *
    * Returns 0 if all batches passed (or nothing to do), 1 on failure or crash.
    */
@@ -107,10 +107,16 @@ export class Worker {
       if (rerunFiles.length > 0) {
         const queueLen = await this.queue.length(this.key)
         if (queueLen > 0) {
-          this.log(`[specbandit] ERROR: weird state — shared queue '${this.key}' (${queueLen} files) and rerun key '${this.keyRerun}' (${rerunFiles.length} files) both have data. Refusing to run.`)
-          return 1
+          // The queue was re-pushed while this runner still carries rerun
+          // memory from a previous run (a full rerun). The stored memory is
+          // stale — discard it and steal from the shared queue like a classic
+          // run, re-recording each stolen batch as we go.
+          this.log(`[specbandit] Shared queue '${this.key}' and rerun key '${this.keyRerun}' both have files. Full rerun: resetting '${this.keyRerun}' and working from '${this.key}'.`)
+          await this.queue.delete(this.keyRerun!)
+          exitCode = await this.runSteal(true)
+        } else {
+          exitCode = await this.runReplay(rerunFiles)
         }
-        exitCode = await this.runReplay(rerunFiles)
       } else {
         // No rerun data: steal from the shared queue, recording each batch to
         // the rerun key when one is configured. Handles both the classic run

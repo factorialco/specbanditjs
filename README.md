@@ -212,7 +212,7 @@ follows this truth table:
 | Yes | empty | empty | **Ok** -- worker arriving late. Queue already drained, nothing to do (exit 0). |
 | Yes | populated | empty | **Ok. Classic run** -- steal from the shared queue, recording each batch to the rerun key when `--key-rerun` is set. |
 | Yes | empty | populated | **Ok. Classic rerun** -- replay exactly the recorded files, ignoring the shared queue. |
-| Yes | populated | populated | **Crash (exit 1)** -- weird state, refuse to run. |
+| Yes | populated | populated | **Ok. Full rerun** -- the queue was re-pushed while this runner still holds rerun memory from a previous run. The stale rerun key is deleted and the runner steals from the shared queue like a classic run, re-recording as it goes. |
 
 ### Complete GitHub Actions example with re-run support
 
@@ -251,7 +251,8 @@ jobs:
 - **Push** uses `RPUSH` to append all file paths to a Redis list in a single command, then sets `EXPIRE` on the key (default: 1 week). It also sets a `<key>:published` marker with the same TTL so workers can tell a drained queue from one that was never published.
 - **Steal** uses `LPOP key count` (Redis 6.2+), which atomically pops up to N elements. No Lua scripts, no locks, no race conditions.
 - **Record** (when `--key-rerun` is set): after each steal, the batch is also `RPUSH`ed to the per-runner rerun key with the same TTL.
-- **Replay** (when `--key-rerun` has data): reads all files from the rerun key via `LRANGE` (non-destructive), splits into batches, and runs them locally.
+- **Replay** (when `--key-rerun` has data and the shared queue is drained): reads all files from the rerun key via `LRANGE` (non-destructive), splits into batches, and runs them locally.
+- **Full rerun** (when both the shared queue and the rerun key have data): the stale rerun key is removed with `DEL`, then the runner steals from the shared queue and re-records as in a classic run.
 - **Run** spawns the configured command via `child_process.spawnSync()` with file paths as arguments. No shell expansion overhead.
 - **Exit code** is 0 if every batch passed (or the queue was already empty), 1 if any batch had failures.
 

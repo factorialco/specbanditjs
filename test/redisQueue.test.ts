@@ -11,6 +11,7 @@ describe('RedisQueue', () => {
     lrange: ReturnType<typeof vi.fn>
     set: ReturnType<typeof vi.fn>
     exists: ReturnType<typeof vi.fn>
+    del: ReturnType<typeof vi.fn>
     quit: ReturnType<typeof vi.fn>
   }
 
@@ -26,6 +27,7 @@ describe('RedisQueue', () => {
       lrange: vi.fn(),
       set: vi.fn(),
       exists: vi.fn(),
+      del: vi.fn(),
       quit: vi.fn(),
     }
 
@@ -130,6 +132,17 @@ describe('RedisQueue', () => {
 
       const result = await queue.readAll('missing-key')
       expect(result).toEqual([])
+    })
+  })
+
+  describe('#delete', () => {
+    it('removes the key via DEL', async () => {
+      mockRedis.del.mockResolvedValue(1)
+
+      const result = await queue.delete('my-key')
+
+      expect(mockRedis.del).toHaveBeenCalledWith('my-key')
+      expect(result).toBe(1)
     })
   })
 
