@@ -23,8 +23,9 @@ function parseArgs(argv: string[]): { flags: Record<string, string>; positional:
 
     if (arg.startsWith('--')) {
       const key = arg.slice(2)
-      // Boolean flags
-      if (key === 'verbose' || key === 'help') {
+      // Boolean flags. A flag missing from this list consumes the next token
+      // as its value, so `--reset --key K` would swallow `--key`.
+      if (key === 'verbose' || key === 'help' || key === 'reset') {
         flags[key] = 'true'
         i++
         continue
@@ -74,6 +75,8 @@ Options:
   --pattern PATTERN    Glob pattern for file discovery (e.g. 'src/**/*.test.ts')
   --redis-url URL      Redis URL (default: redis://localhost:6379)
   --key-ttl SECONDS    TTL for all Redis keys (default: 604800 / 1 week)
+  --reset              Empty the key before pushing, so a re-run cannot
+                       enqueue a second copy of the work list
   -h, --help           Show this help`)
     return 0
   }
@@ -97,12 +100,53 @@ Options:
     const count = await publisher.publish({
       files: positional.length > 0 ? positional : undefined,
       pattern: flags.pattern,
+      reset: flags.reset === 'true',
     })
 
     return count > 0 ? 0 : 1
   } finally {
     await queue.close()
   }
+}
+
+/**
+ * Empty a queue key and its published marker, leaving it as if nothing had
+ * ever been pushed. Standalone counterpart to `push --reset`, for callers that
+ * clean up separately from the push.
+ */
+async function runReset(argv: string[]): Promise<number> {
+  const { flags } = parseArgs(argv)
+
+  if (flags.help) {
+    console.log(`Usage: specbandit reset [options]
+
+Options:
+  --key KEY            Redis queue key (required, or set SPECBANDIT_KEY)
+  --redis-url URL      Redis URL (default: redis://localhost:6379)
+  -h, --help           Show this help`)
+    return 0
+  }
+
+  const config = new Configuration({
+    key: flags.key,
+    redisUrl: flags['redis-url'],
+    redisMaxAttempts: flags['redis-max-attempts'] ? parseInt(flags['redis-max-attempts'], 10) : undefined,
+  })
+  config.validate()
+
+  const key = config.key!
+  const queue = new RedisQueue(config.redisUrl, redisOptions(config))
+  try {
+    const stale = await queue.length(key)
+    await queue.clear(key)
+    console.log(`[specbandit] Reset key '${key}': discarded ${stale} queued files.`)
+  } finally {
+    await queue.close()
+  }
+
+  // Removing nothing is a valid outcome: the caller asked for an empty key and
+  // got one.
+  return 0
 }
 
 /**
@@ -257,12 +301,22 @@ function printUsage(): void {
 Usage:
   specbandit push [options] [files...]           Enqueue test files into Redis
   specbandit work [options] [-- extra-opts...]   Steal and run test file batches
+  specbandit reset [options]                     Empty a queue key and its published marker
 
 Push options:
   --key KEY              Redis queue key (required, or set SPECBANDIT_KEY)
   --pattern PATTERN      Glob pattern for file discovery (e.g. 'src/**/*.test.ts')
   --redis-url URL        Redis URL (default: redis://localhost:6379)
   --key-ttl SECONDS      TTL for all Redis keys (default: 604800 / 1 week)
+  --reset                Empty the key before pushing (see Reset options)
+
+Reset options:
+  --key KEY              Redis queue key (required, or set SPECBANDIT_KEY)
+  --redis-url URL        Redis URL (default: redis://localhost:6379)
+
+  Deletes the queue list and its ':published' marker, leaving the key as if
+  nothing had ever been pushed. Per-runner rerun and failed keys are left
+  alone, so a re-run of a single shard can still replay its own files.
 
 Work options:
   --key KEY              Redis queue key (required, or set SPECBANDIT_KEY)
@@ -337,6 +391,9 @@ export class CLI {
 
         case 'work':
           return await runWork(args)
+
+        case 'reset':
+          return await runReset(args)
 
         case undefined:
         case '-h':

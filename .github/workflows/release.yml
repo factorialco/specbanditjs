@@ -41,12 +41,29 @@ jobs:
       - name: Update package-lock.json
         run: npm install --package-lock-only
 
+      # The VERSION constant cannot import package.json (tsconfig rootDir is
+      # src), so the release has to keep the two in step. Without this the
+      # constant silently rots and `--version` reports a version nobody shipped.
+      - name: Sync the VERSION constant
+        run: |
+          VERSION="${{ steps.bump.outputs.version }}"
+          node -e "
+            const fs = require('fs')
+            const path = 'src/configuration.ts'
+            const before = fs.readFileSync(path, 'utf8')
+            const after = before.replace(/^export const VERSION = '.*'$/m, \"export const VERSION = '\" + process.env.VERSION + \"'\")
+            if (after === before) { console.error('VERSION constant not found in ' + path); process.exit(1) }
+            fs.writeFileSync(path, after)
+          "
+        env:
+          VERSION: ${{ steps.bump.outputs.version }}
+
       - name: Commit and push version bump
         run: |
           VERSION="${{ steps.bump.outputs.version }}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add package.json package-lock.json
+          git add package.json package-lock.json src/configuration.ts
           git commit -m "Release v${VERSION}"
           git push origin main
 
