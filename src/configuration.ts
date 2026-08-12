@@ -1,6 +1,6 @@
 // Kept in step with package.json by the release workflow. It cannot import
 // package.json: tsconfig rootDir is src, so the import would escape it.
-export const VERSION = '1.3.0'
+export const VERSION = '1.4.0'
 
 export class SpecbanditError extends Error {
   constructor(message: string) {
