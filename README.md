@@ -50,6 +50,14 @@ specbandit push --key pr-123-run-456 test/models/user.test.ts test/models/order.
 
 File input priority: **stdin > --pattern > direct args**.
 
+Add `--reset` when the producer can run more than once for the same key:
+
+```bash
+specbandit push --key pr-123-run-456 --reset --pattern 'test/**/*.test.ts'
+```
+
+See [Repeated pushes: `--reset`](#repeated-pushes---reset).
+
 ### 2. Steal and run from multiple workers
 
 Each CI runner steals batches and runs them. Start as many runners as you want -- they'll divide the work automatically.
@@ -75,6 +83,11 @@ specbandit push [options] [files...]
   --pattern PATTERN      Glob pattern for file discovery
   --redis-url URL        Redis URL (default: redis://localhost:6379)
   --key-ttl SECONDS      TTL for all Redis keys (default: 604800 / 1 week)
+  --reset                Empty the key before pushing (see below)
+
+specbandit reset [options]
+  --key KEY              Redis queue key (required)
+  --redis-url URL        Redis URL (default: redis://localhost:6379)
 
 specbandit work [options]
   --key KEY              Redis queue key (required)
@@ -246,6 +259,34 @@ jobs:
             --batch-size 10
 ```
 
+## Repeated pushes: `--reset`
+
+The queue key is scoped by CI run, not by CI attempt. It has to be: re-running a single failed runner does not re-run the job that pushed, so that runner must still find the queue and the published marker the first attempt created.
+
+The cost is that the producer is not idempotent. A producer that pushes and then fails, or that is re-run as part of the whole workflow, appends a second copy of the work list to the same key. Every file is then enqueued twice, so the suite runs twice, and any two copies that reach the same worker are loaded twice in one process. For test files that define constants at module scope, the second load is fatal.
+
+`--reset` makes the push idempotent:
+
+```bash
+specbandit push --key "pr-42-run-100" --reset --pattern 'test/**/*.test.ts'
+```
+
+The queue and its `<key>:published` marker are deleted, then the work list is pushed, so the key holds exactly one copy however many times the producer runs. The leftover count is logged, and a non-zero one tells you an earlier attempt pushed a list nobody consumed:
+
+```
+[specbandit] Reset key 'pr-42-run-100': discarded 4213 queued files from a previous push.
+```
+
+There is also a standalone command, for callers that clean up separately from the push:
+
+```bash
+specbandit reset --key "pr-42-run-100"
+```
+
+Both leave the per-runner rerun keys and the failed keys alone, so a single-runner re-run can still replay its own files. A runner that finds data in both the shared queue and its rerun key is the **full rerun** case in the table above, and it resets its own memory.
+
+A reset with nothing to reset is not an error. Neither command clears the key when there is nothing to push in its place: dropping the marker on its own would make every worker on that key crash as "never published".
+
 ## How it works
 
 - **Push** uses `RPUSH` to append all file paths to a Redis list in a single command, then sets `EXPIRE` on the key (default: 1 week). It also sets a `<key>:published` marker with the same TTL so workers can tell a drained queue from one that was never published.
@@ -253,6 +294,7 @@ jobs:
 - **Record** (when `--key-rerun` is set): after each steal, the batch is also `RPUSH`ed to the per-runner rerun key with the same TTL.
 - **Replay** (when `--key-rerun` has data and the shared queue is drained): reads all files from the rerun key via `LRANGE` (non-destructive), splits into batches, and runs them locally.
 - **Full rerun** (when both the shared queue and the rerun key have data): the stale rerun key is removed with `DEL`, then the runner steals from the shared queue and re-records as in a classic run.
+- **Reset** (`push --reset` or `specbandit reset`) removes the queue and its `<key>:published` marker in a single `DEL`, so a producer that runs twice cannot enqueue the work list twice. Rerun and failed keys are untouched.
 - **Run** spawns the configured command via `child_process.spawnSync()` with file paths as arguments. No shell expansion overhead.
 - **Exit code** is 0 if every batch passed (or the queue was already empty), 1 if any batch had failures.
 

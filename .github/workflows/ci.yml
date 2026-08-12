@@ -683,6 +683,82 @@ jobs:
 
           exit $ERRORS
 
+      # ── Scenario 8: repeated push — --reset keeps one copy ──
+
+      - name: "Scenario 8: repeated push — --reset keeps one copy"
+        id: scenario8
+        run: |
+          KEY="e2e-reset-${{ github.run_id }}"
+          FILES="apple banana cherry date elderberry fig grape"
+          ERRORS=0
+
+          # redis-cli is not on the runner image, so read Redis through the
+          # ioredis dependency the package already installs.
+          cat > redis-probe.mjs <<'PROBE'
+          import Redis from 'ioredis'
+          const [, , key, command] = process.argv
+          const redis = new Redis('redis://localhost:6379')
+          const value = command === 'llen' ? await redis.llen(key) : await redis.exists(key)
+          console.log(value)
+          await redis.quit()
+          PROBE
+
+          # A producer that runs twice appends a second copy of the work list.
+          node dist/bin.js push --key "$KEY" $FILES
+          node dist/bin.js push --key "$KEY" $FILES
+
+          BEFORE=$(node redis-probe.mjs "$KEY" llen)
+          if [ "$BEFORE" -ne 14 ]; then
+            echo "::error::Expected 14 entries after two plain pushes, found $BEFORE"
+            ERRORS=$((ERRORS + 1))
+          fi
+
+          node dist/bin.js push --key "$KEY" --reset $FILES > reset-push.log 2>&1
+          cat reset-push.log
+
+          AFTER=$(node redis-probe.mjs "$KEY" llen)
+          if [ "$AFTER" -ne 7 ]; then
+            echo "::error::Expected 7 entries after a reset push, found $AFTER"
+            ERRORS=$((ERRORS + 1))
+          fi
+
+          if ! grep -q "discarded 14 queued files" reset-push.log; then
+            echo "::error::Reset did not report the 14 files it discarded"
+            ERRORS=$((ERRORS + 1))
+          fi
+
+          # The marker must come back, or every worker on this key crashes as
+          # "never published".
+          if [ "$(node redis-probe.mjs "${KEY}:published" exists)" -ne 1 ]; then
+            echo "::error::Published marker missing after a reset push"
+            ERRORS=$((ERRORS + 1))
+          fi
+
+          # A worker must see each file exactly once. --verbose lists one file
+          # per line, indented, which is what the count below matches.
+          GITHUB_STEP_SUMMARY= node dist/bin.js work --key "$KEY" --command echo --batch-size 3 --verbose > reset-worker.log 2>&1
+          cat reset-worker.log
+          for f in $FILES; do
+            SEEN=$(grep -c "^  ${f}$" reset-worker.log || true)
+            if [ "$SEEN" -ne 1 ]; then
+              echo "::error::Worker saw '${f}' ${SEEN} times, expected once"
+              ERRORS=$((ERRORS + 1))
+            fi
+          done
+
+          # The standalone command leaves the key as if nothing was pushed.
+          node dist/bin.js reset --key "$KEY"
+          if [ "$(node redis-probe.mjs "${KEY}:published" exists)" -ne 0 ]; then
+            echo "::error::Standalone reset left the published marker behind"
+            ERRORS=$((ERRORS + 1))
+          fi
+
+          echo "## Scenario 8: repeated push — --reset keeps one copy" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Two plain pushes stacked 14 entries; a third push with \`--reset\` left 7." >> "$GITHUB_STEP_SUMMARY"
+
+          exit $ERRORS
+
       # ── Final gate ──
 
       - name: "Check all scenarios passed"
@@ -696,6 +772,7 @@ jobs:
           if [ "${{ steps.scenario5.outcome }}" != "success" ]; then FAILED="$FAILED scenario5"; fi
           if [ "${{ steps.scenario6.outcome }}" != "success" ]; then FAILED="$FAILED scenario6"; fi
           if [ "${{ steps.scenario7.outcome }}" != "success" ]; then FAILED="$FAILED scenario7"; fi
+          if [ "${{ steps.scenario8.outcome }}" != "success" ]; then FAILED="$FAILED scenario8"; fi
           if [ -n "$FAILED" ]; then
             echo "::error::Failed scenarios:$FAILED"
             exit 1

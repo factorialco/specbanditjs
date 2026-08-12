@@ -146,6 +146,23 @@ describe('RedisQueue', () => {
     })
   })
 
+  describe('#clear', () => {
+    it('removes the queue and its published marker in a single DEL', async () => {
+      mockRedis.del.mockResolvedValue(2)
+
+      const result = await queue.clear('my-key')
+
+      expect(mockRedis.del).toHaveBeenCalledWith('my-key', 'my-key:published')
+      expect(result).toBe(2)
+    })
+
+    it('reports 0 when neither key exists', async () => {
+      mockRedis.del.mockResolvedValue(0)
+
+      expect(await queue.clear('my-key')).toBe(0)
+    })
+  })
+
   describe('#markPublished', () => {
     it('sets the published marker key with a TTL via SET EX', async () => {
       mockRedis.set.mockResolvedValue('OK')

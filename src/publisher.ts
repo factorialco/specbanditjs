@@ -25,15 +25,23 @@ export class Publisher {
    * Resolve files from the three input sources (priority: stdin > pattern > args)
    * and push them onto the Redis queue.
    *
+   * With `reset: true` the key is emptied first, so the queue ends up holding
+   * exactly this work list even if an earlier attempt already pushed one.
+   *
    * Returns the number of files enqueued.
    */
-  async publish(options: { files?: string[]; pattern?: string } = {}): Promise<number> {
+  async publish(options: { files?: string[]; pattern?: string; reset?: boolean } = {}): Promise<number> {
     const resolved = await this.resolveFiles(options.files ?? [], options.pattern)
 
     if (resolved.length === 0) {
       this.log('[specbandit] No files to enqueue.')
       return 0
     }
+
+    // Only reset once there is something to put in its place. Clearing on an
+    // empty push would drop the marker too and leave workers crashing on a key
+    // that looks like it was never published.
+    if (options.reset) await this.resetKey()
 
     // Time each Redis write so latency is visible in CI logs.
     const pushStart = performance.now()
@@ -49,6 +57,22 @@ export class Publisher {
     this.log(`[specbandit] Enqueued ${resolved.length} files onto key '${this.key}' (TTL: ${this.keyTtl}s).`)
     this.log(`[specbandit] Redis latency: push ${pushMs.toFixed(1)}ms, mark published ${markMs.toFixed(1)}ms.`)
     return resolved.length
+  }
+
+  /**
+   * Empty the key before pushing. The leftover count is reported because a
+   * non-zero one means an earlier attempt pushed a list that no worker ever
+   * consumed, which is worth seeing in the producer's log.
+   */
+  private async resetKey(): Promise<void> {
+    const stale = await this.queue.length(this.key)
+    await this.queue.clear(this.key)
+
+    this.log(
+      stale > 0
+        ? `[specbandit] Reset key '${this.key}': discarded ${stale} queued files from a previous push.`
+        : `[specbandit] Reset key '${this.key}': nothing left over.`
+    )
   }
 
   private async resolveFiles(files: string[], pattern?: string): Promise<string[]> {
