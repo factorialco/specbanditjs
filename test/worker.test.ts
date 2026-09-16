@@ -397,10 +397,10 @@ describe.each([
     })
   })
 
-  // ── Verbose mode ──────────────────────────────────────────────────────
+  // ── Batch file listing ────────────────────────────────────────────────
 
-  describe('verbose mode', () => {
-    it('shows file list per batch when verbose', async () => {
+  describe('batch file listing', () => {
+    it('lists the files of each batch when verbose', async () => {
       queue.steal
         .mockResolvedValueOnce(['test/a.test.ts'])
         .mockResolvedValueOnce([])
@@ -409,14 +409,17 @@ describe.each([
       expect(capture.getOutput()).toContain('  test/a.test.ts')
     })
 
-    it('hides file list per batch when quiet', async () => {
+    // A runner killed mid-batch prints nothing after the batch header, so the
+    // listing is the only record of what was running. Quiet is the mode that
+    // run is in, which is why the listing is not tied to verbose.
+    it('lists them when quiet too', async () => {
       queue.steal
         .mockResolvedValueOnce(['test/a.test.ts'])
         .mockResolvedValueOnce([])
 
       await makeWorker({ verbose: false }).run()
       expect(capture.getOutput()).toContain('Batch #1: running 1 files')
-      expect(capture.getOutput()).not.toContain('  test/a.test.ts')
+      expect(capture.getOutput()).toContain('  test/a.test.ts')
     })
   })
 
