@@ -227,7 +227,7 @@ Options:
   --key-rerun KEY        Per-runner rerun key for re-run support
   --key-failed KEY       Redis key to store failed test file paths for later review
   --key-ttl SECONDS      TTL for all Redis keys (default: 604800 / 1 week)
-  --verbose              Show per-batch file list and full command output
+  --verbose              Show full command output (the per-batch file list is always shown)
   --report PATH          Write JSON report with statistics to file
   -h, --help             Show this help
 
@@ -337,7 +337,7 @@ Work options:
   --key-rerun KEY        Per-runner rerun key for re-run support
   --key-failed KEY       Redis key to store failed test file paths for later review
   --key-ttl SECONDS      TTL for all Redis keys (default: 604800 / 1 week)
-  --verbose              Show per-batch file list and full command output
+  --verbose              Show full command output (the per-batch file list is always shown)
   --report PATH          Write JSON report with statistics to file
 
   Arguments after -- are forwarded to the adapter (jest opts, command opts, etc.).

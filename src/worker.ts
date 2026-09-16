@@ -150,10 +150,12 @@ export class Worker {
     for (let i = 0; i < files.length; i += this.batchSize) {
       const batch = files.slice(i, i + this.batchSize)
       batchNum++
+      // The batch is listed unconditionally, not behind --verbose. A runner that
+      // dies mid-batch (an OOM kill takes the whole process) prints nothing after
+      // this line, so these names are the only record of what was in flight — and
+      // that is exactly the run where nobody thought to turn verbose on.
       this.log(`[specbandit] Batch #${batchNum}: running ${batch.length} files`)
-      if (this.verbose) {
-        for (const f of batch) this.log(`  ${f}`)
-      }
+      for (const f of batch) this.log(`  ${f}`)
 
       const result = await this.adapter.runBatch(batch, batchNum)
       this.batchResults.push(result)
@@ -203,10 +205,12 @@ export class Worker {
       }
 
       batchNum++
+      // The batch is listed unconditionally, not behind --verbose. A runner that
+      // dies mid-batch (an OOM kill takes the whole process) prints nothing after
+      // this line, so these names are the only record of what was in flight — and
+      // that is exactly the run where nobody thought to turn verbose on.
       this.log(`[specbandit] Batch #${batchNum}: running ${files.length} files`)
-      if (this.verbose) {
-        for (const f of files) this.log(`  ${f}`)
-      }
+      for (const f of files) this.log(`  ${f}`)
 
       const result = await this.adapter.runBatch(files, batchNum)
       this.batchResults.push(result)
