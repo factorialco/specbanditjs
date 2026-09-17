@@ -16,5 +16,7 @@ export { JestAdapter } from './jestAdapter.js'
 export type { JestAdapterOptions } from './jestAdapter.js'
 export { CypressAdapter } from './cypressAdapter.js'
 export type { CypressAdapterOptions } from './cypressAdapter.js'
+export { VitestAdapter } from './vitestAdapter.js'
+export type { VitestAdapterOptions } from './vitestAdapter.js'
 
 export { CLI } from './cli.js'
