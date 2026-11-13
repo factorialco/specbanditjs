@@ -19,6 +19,7 @@ export interface ConfigurationOptions {
   keyFailed?: string | null
   keyTtl?: number
   verbose?: boolean
+  failFast?: boolean
   redisMaxAttempts?: number
   redisConnectTimeout?: number
   redisCommandTimeout?: number
@@ -82,6 +83,8 @@ export class Configuration {
   keyFailed: string | null
   keyTtl: number
   verbose: boolean
+  /** Stop at the first failed batch and prune the shared queue. */
+  failFast: boolean
   /** Application-level retry attempts on a Redis connection failure. */
   redisMaxAttempts: number
   /** ioredis connect timeout, in milliseconds. */
@@ -103,6 +106,7 @@ export class Configuration {
     this.keyFailed = options.keyFailed ?? process.env.SPECBANDIT_KEY_FAILED ?? null
     this.keyTtl = options.keyTtl ?? parseInt(process.env.SPECBANDIT_KEY_TTL ?? String(DEFAULT_KEY_TTL), 10)
     this.verbose = options.verbose ?? envTruthy('SPECBANDIT_VERBOSE')
+    this.failFast = options.failFast ?? envTruthy('SPECBANDIT_FAIL_FAST')
 
     this.redisMaxAttempts =
       options.redisMaxAttempts ?? envInt('SPECBANDIT_REDIS_MAX_ATTEMPTS', DEFAULT_REDIS_MAX_ATTEMPTS)
@@ -131,6 +135,21 @@ export class Configuration {
     }
     if (!Number.isInteger(this.redisMaxAttempts) || this.redisMaxAttempts <= 0) {
       throw new SpecbanditError('redis_max_attempts must be a positive integer')
+    }
+  }
+
+  /**
+   * Checks that only `work` needs. Kept apart from validate() so that a
+   * CI-wide SPECBANDIT_FAIL_FAST cannot break `push` or `reset`.
+   */
+  validateFailFast(): void {
+    // The failed key feeds a later retry pass. Fail-fast prunes the queue at
+    // the first failure, so most files never run and the retry list would be
+    // incomplete. An empty key name counts as not set, like everywhere else.
+    if (this.failFast && this.keyFailed) {
+      throw new SpecbanditError(
+        '--fail-fast cannot be used with --key-failed: fail-fast stops at the first failure, so the failed key would not hold a complete list to retry'
+      )
     }
   }
 

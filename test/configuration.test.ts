@@ -13,6 +13,7 @@ describe('Configuration', () => {
     'SPECBANDIT_KEY_FAILED',
     'SPECBANDIT_KEY_TTL',
     'SPECBANDIT_VERBOSE',
+    'SPECBANDIT_FAIL_FAST',
     'SPECBANDIT_REDIS_MAX_ATTEMPTS',
     'SPECBANDIT_REDIS_CONNECT_TIMEOUT',
     'SPECBANDIT_REDIS_TIMEOUT',
@@ -267,6 +268,46 @@ describe('Configuration', () => {
     it('passes when key and command are valid', () => {
       const config = new Configuration({ key: 'valid-key', command: 'npx jest' })
       expect(() => config.validateForWork()).not.toThrow()
+    })
+  })
+
+  describe('fail-fast', () => {
+    it('is off by default', () => {
+      expect(new Configuration().failFast).toBe(false)
+    })
+
+    it('reads SPECBANDIT_FAIL_FAST from the environment', () => {
+      process.env.SPECBANDIT_FAIL_FAST = 'yes'
+      expect(new Configuration().failFast).toBe(true)
+    })
+
+    it('prefers an explicit option over the environment', () => {
+      process.env.SPECBANDIT_FAIL_FAST = 'true'
+      expect(new Configuration({ failFast: false }).failFast).toBe(false)
+    })
+  })
+
+  describe('validateFailFast()', () => {
+    it('throws when fail-fast is combined with a failed key', () => {
+      const config = new Configuration({ key: 'k', failFast: true, keyFailed: 'k-failed' })
+      expect(() => config.validateFailFast()).toThrow(SpecbanditError)
+      expect(() => config.validateFailFast()).toThrow(/--fail-fast cannot be used with --key-failed/)
+    })
+
+    it('throws when the failed key comes from the environment', () => {
+      process.env.SPECBANDIT_KEY_FAILED = 'k-failed'
+      const config = new Configuration({ key: 'k', failFast: true })
+      expect(() => config.validateFailFast()).toThrow(/--key-failed/)
+    })
+
+    it('passes when the failed key is an empty string (treated as not set)', () => {
+      const config = new Configuration({ key: 'k', failFast: true, keyFailed: '' })
+      expect(() => config.validateFailFast()).not.toThrow()
+    })
+
+    it('passes when fail-fast is off and a failed key is set', () => {
+      const config = new Configuration({ key: 'k', keyFailed: 'k-failed' })
+      expect(() => config.validateFailFast()).not.toThrow()
     })
   })
 })
