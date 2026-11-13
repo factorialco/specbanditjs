@@ -25,7 +25,7 @@ function parseArgs(argv: string[]): { flags: Record<string, string>; positional:
       const key = arg.slice(2)
       // Boolean flags. A flag missing from this list consumes the next token
       // as its value, so `--reset --key K` would swallow `--key`.
-      if (key === 'verbose' || key === 'help' || key === 'reset') {
+      if (key === 'verbose' || key === 'help' || key === 'reset' || key === 'fail-fast') {
         flags[key] = 'true'
         i++
         continue
@@ -229,6 +229,9 @@ Options:
   --key-ttl SECONDS      TTL for all Redis keys (default: 604800 / 1 week)
   --verbose              Show full command output (the per-batch file list is always shown)
   --report PATH          Write JSON report with statistics to file
+  --fail-fast            Stop at the first failed batch and remove the pending
+                         files from the shared queue, so other workers stop too.
+                         Cannot be used with --key-failed
   -h, --help             Show this help
 
 Arguments after -- are forwarded to the adapter (jest opts, command opts, etc.).
@@ -261,6 +264,7 @@ Adapters:
     keyFailed: flags['key-failed'],
     keyTtl: flags['key-ttl'] ? parseInt(flags['key-ttl'], 10) : undefined,
     verbose: flags.verbose === 'true' ? true : undefined,
+    failFast: flags['fail-fast'] === 'true' ? true : undefined,
     redisMaxAttempts: flags['redis-max-attempts'] ? parseInt(flags['redis-max-attempts'], 10) : undefined,
   })
 
@@ -272,6 +276,7 @@ Adapters:
   } else {
     config.validateForWork()
   }
+  config.validateFailFast()
 
   const adapter = buildAdapter(flags, config)
   const queue = new RedisQueue(config.redisUrl, redisOptions(config))
@@ -285,6 +290,7 @@ Adapters:
       keyFailed: config.keyFailed,
       keyTtl: config.keyTtl,
       verbose: config.verbose,
+      failFast: config.failFast,
       queue,
       report: flags['report'] ?? process.env.SPECBANDIT_REPORT ?? null,
     })
@@ -339,6 +345,9 @@ Work options:
   --key-ttl SECONDS      TTL for all Redis keys (default: 604800 / 1 week)
   --verbose              Show full command output (the per-batch file list is always shown)
   --report PATH          Write JSON report with statistics to file
+  --fail-fast            Stop at the first failed batch and remove the pending
+                         files from the shared queue, so other workers stop too.
+                         Cannot be used with --key-failed
 
   Arguments after -- are forwarded to the adapter (jest opts, command opts, etc.).
   They are merged with --command-opts if both are provided.
@@ -361,6 +370,7 @@ Environment variables:
   SPECBANDIT_KEY_TTL          TTL for all Redis keys in seconds (default: 604800)
   SPECBANDIT_VERBOSE          Enable verbose output (1/true/yes)
   SPECBANDIT_REPORT           Path to write JSON report file
+  SPECBANDIT_FAIL_FAST        Stop at the first failed batch (1/true/yes)
   SPECBANDIT_REDIS_MAX_ATTEMPTS      Redis connection retry attempts (default: 5)
   SPECBANDIT_REDIS_CONNECT_TIMEOUT   Redis connect timeout, seconds (default: 3)
   SPECBANDIT_REDIS_TIMEOUT           Redis command timeout, seconds (default: 5)

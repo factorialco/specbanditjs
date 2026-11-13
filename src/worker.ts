@@ -12,6 +12,8 @@ export interface WorkerOptions {
   keyFailed?: string | null
   keyTtl?: number
   verbose?: boolean
+  /** Stop at the first failed batch and prune the shared queue. */
+  failFast?: boolean
   queue?: RedisQueue
   output?: NodeJS.WritableStream
   report?: string | null
@@ -30,6 +32,8 @@ export interface WorkerOptionsLegacy {
   keyFailed?: string | null
   keyTtl?: number
   verbose?: boolean
+  /** Stop at the first failed batch and prune the shared queue. */
+  failFast?: boolean
   queue?: RedisQueue
   output?: NodeJS.WritableStream
   report?: string | null
@@ -44,6 +48,7 @@ export class Worker {
   readonly keyFailed: string | null
   readonly keyTtl: number
   readonly verbose: boolean
+  readonly failFast: boolean
   readonly output: NodeJS.WritableStream
   readonly report: string | null
 
@@ -57,6 +62,7 @@ export class Worker {
     this.keyFailed = options.keyFailed ?? null
     this.keyTtl = options.keyTtl ?? 604_800
     this.verbose = options.verbose ?? false
+    this.failFast = options.failFast ?? false
     this.queue = options.queue ?? new RedisQueue()
     this.output = options.output ?? process.stdout
     this.report = options.report ?? null
@@ -164,6 +170,11 @@ export class Worker {
         this.log(`[specbandit] Batch #${batchNum} FAILED (exit code: ${result.exitCode})`)
         failed = true
         await this.recordFailed(result)
+        if (this.failFast) {
+          // Replay never touches the shared queue, so there is nothing to prune.
+          this.log(`[specbandit] Fail-fast: batch #${batchNum} failed. Skipping the remaining replay files.`)
+          break
+        }
       } else {
         this.log(`[specbandit] Batch #${batchNum} passed.`)
       }
@@ -219,6 +230,10 @@ export class Worker {
         this.log(`[specbandit] Batch #${batchNum} FAILED (exit code: ${result.exitCode})`)
         failed = true
         await this.recordFailed(result)
+        if (this.failFast) {
+          await this.pruneQueue(batchNum)
+          break
+        }
       } else {
         this.log(`[specbandit] Batch #${batchNum} passed.`)
       }
@@ -233,6 +248,22 @@ export class Worker {
     }
 
     return failed ? 1 : 0
+  }
+
+  /**
+   * Fail-fast: empty the shared queue so no worker steals more files.
+   *
+   * Only the list is deleted. The published marker stays, so a worker that
+   * checks the queue after this sees "published but drained" and exits 0,
+   * instead of crashing with "no work published". Workers with a batch in
+   * flight finish it, then find the queue empty and stop.
+   */
+  private async pruneQueue(batchNum: number): Promise<void> {
+    const pending = await this.queue.length(this.key)
+    await this.queue.delete(this.key)
+    this.log(
+      `[specbandit] Fail-fast: batch #${batchNum} failed. Pruned ${pending} pending files from '${this.key}'. Stopping.`
+    )
   }
 
   // --- Reporting helpers ---

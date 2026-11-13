@@ -232,6 +232,100 @@ describe.each([
     })
   })
 
+  // ── Fail-fast ─────────────────────────────────────────────────────────
+
+  describe('fail-fast', () => {
+    it('stops after the first failed batch and prunes the shared queue', async () => {
+      queue.steal
+        .mockResolvedValueOnce(['test/a.test.ts'])
+        .mockResolvedValueOnce(['test/b.test.ts'])
+        .mockResolvedValueOnce(['test/c.test.ts'])
+        .mockResolvedValueOnce([])
+      queue.length.mockResolvedValue(7)
+      fixture.failBatch(2)
+
+      const exitCode = await makeWorker({ failFast: true }).run()
+
+      expect(exitCode).toBe(1)
+      expect(fixture.batchCallCount()).toBe(2)
+      expect(queue.steal).toHaveBeenCalledTimes(2)
+      expect(queue.delete).toHaveBeenCalledWith(key)
+      expect(capture.getOutput()).toContain(
+        `Fail-fast: batch #2 failed. Pruned 7 pending files from '${key}'. Stopping.`
+      )
+    })
+
+    it('keeps the published marker so late workers exit cleanly', async () => {
+      queue.steal.mockResolvedValueOnce(['test/a.test.ts']).mockResolvedValueOnce([])
+      fixture.failBatch(1)
+
+      await makeWorker({ failFast: true }).run()
+
+      // Only the list is deleted; clear() would also drop the ':published' marker.
+      expect(queue.delete).toHaveBeenCalledTimes(1)
+      expect(queue.delete).toHaveBeenCalledWith(key)
+    })
+
+    it('does not prune when every batch passes', async () => {
+      queue.steal
+        .mockResolvedValueOnce(['test/a.test.ts'])
+        .mockResolvedValueOnce(['test/b.test.ts'])
+        .mockResolvedValueOnce([])
+
+      const exitCode = await makeWorker({ failFast: true }).run()
+
+      expect(exitCode).toBe(0)
+      expect(fixture.batchCallCount()).toBe(2)
+      expect(queue.delete).not.toHaveBeenCalled()
+    })
+
+    it('does not prune or stop without the flag', async () => {
+      queue.steal
+        .mockResolvedValueOnce(['test/a.test.ts'])
+        .mockResolvedValueOnce(['test/b.test.ts'])
+        .mockResolvedValueOnce([])
+      fixture.failBatch(1)
+
+      const exitCode = await makeWorker().run()
+
+      expect(exitCode).toBe(1)
+      expect(fixture.batchCallCount()).toBe(2)
+      expect(queue.delete).not.toHaveBeenCalled()
+    })
+
+    it('prunes in record mode and keeps what was already recorded', async () => {
+      const keyRerun = 'pr-123-run-456-runner-1'
+      queue.steal
+        .mockResolvedValueOnce(['test/a.test.ts'])
+        .mockResolvedValueOnce(['test/b.test.ts'])
+        .mockResolvedValueOnce([])
+      fixture.failBatch(1)
+
+      const exitCode = await makeWorker({ keyRerun, keyTtl: 604_800, failFast: true }).run()
+
+      expect(exitCode).toBe(1)
+      expect(fixture.batchCallCount()).toBe(1)
+      expect(queue.push).toHaveBeenCalledWith(keyRerun, ['test/a.test.ts'], 604_800)
+      expect(queue.delete).toHaveBeenCalledWith(key)
+      expect(queue.delete).not.toHaveBeenCalledWith(keyRerun)
+    })
+
+    it('stops replay after the first failed batch without touching the shared queue', async () => {
+      const keyRerun = 'pr-123-run-456-runner-3'
+      queue.readAll.mockResolvedValue(['test/x.test.ts', 'test/y.test.ts', 'test/z.test.ts'])
+      fixture.failBatch(1)
+
+      const exitCode = await makeWorker({ keyRerun, keyTtl: 604_800, failFast: true }).run()
+
+      expect(exitCode).toBe(1)
+      // 3 files with batch size 2 would be 2 batches; fail-fast stops after the first.
+      expect(fixture.batchCallCount()).toBe(1)
+      expect(queue.steal).not.toHaveBeenCalled()
+      expect(queue.delete).not.toHaveBeenCalled()
+      expect(capture.getOutput()).toContain('Fail-fast: batch #1 failed. Skipping the remaining replay files.')
+    })
+  })
+
   // ── Failed key mode ───────────────────────────────────────────────────
 
   describe('key-failed (recording failed test files)', () => {

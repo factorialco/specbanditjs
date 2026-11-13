@@ -73,7 +73,7 @@ Each worker loops:
 3. Repeat until the queue is empty
 4. Exit 0 if all batches passed, 1 if any failed
 
-A failing batch does **not** stop the worker. It continues stealing remaining work so other runners aren't blocked waiting on files that will never be consumed.
+By default, a failing batch does **not** stop the worker. It continues stealing remaining work so other runners aren't blocked waiting on files that will never be consumed. To stop the whole run at the first failure, use [`--fail-fast`](#fail-fast---fail-fast).
 
 ### CLI reference
 
@@ -99,6 +99,7 @@ specbandit work [options]
   --key-ttl SECONDS      TTL for all Redis keys (default: 604800 / 1 week)
   --verbose              Show per-batch file list and full command output
   --json-out PATH        Write merged JSON results to file
+  --fail-fast            Stop at the first failed batch and empty the shared queue (see below)
 ```
 
 ### Environment variables
@@ -116,6 +117,7 @@ All CLI options can be set via environment variables:
 | `SPECBANDIT_KEY_FAILED` | Redis key for failed test files | *(none)* |
 | `SPECBANDIT_KEY_TTL` | Expiry for all Redis keys in seconds | `604800` (1 week) |
 | `SPECBANDIT_VERBOSE` | Enable verbose output (1/true/yes) | `false` |
+| `SPECBANDIT_FAIL_FAST` | Stop at the first failed batch (1/true/yes) | `false` |
 | `SPECBANDIT_JEST_BATCH_TIMEOUT` | Jest adapter idle (no-progress) timeout in seconds; a batch with no Jest output for this long is treated as hung and failed. `0` disables it. | `600` |
 
 CLI flags take precedence over environment variables.
@@ -287,6 +289,28 @@ Both leave the per-runner rerun keys and the failed keys alone, so a single-runn
 
 A reset with nothing to reset is not an error. Neither command clears the key when there is nothing to push in its place: dropping the marker on its own would make every worker on that key crash as "never published".
 
+## Fail-fast: `--fail-fast`
+
+Use `--fail-fast` when a single failure makes the rest of the run useless, and you want CI to report it as soon as possible.
+
+```bash
+specbandit work --key pr-123-run-456 --command "npx jest" --fail-fast
+```
+
+When a batch fails, the worker:
+
+1. Records the batch in the summary and in the `--report` file, as usual.
+2. Deletes the shared queue list (`DEL <key>`), so no worker can steal the pending files.
+3. Stops and exits 1.
+
+The `<key>:published` marker stays. A worker that checks the queue after the prune sees "published but drained" and exits 0, instead of crashing with "never published". A worker that has a batch in flight finishes that batch, then finds the queue empty and stops. Specbandit does not interrupt a batch in flight.
+
+Specbandit sees results per batch, so the worker stops after the failing batch, not after the failing test. To also stop inside a batch, forward the option of your test runner, for example `-- --bail` for Jest.
+
+In replay mode, the worker stops after the first failed batch and skips the remaining replay files. Replay never touches the shared queue, so there is nothing to prune.
+
+`--fail-fast` cannot be used with `--key-failed`. The failed key feeds a later retry pass, and fail-fast stops before most files run, so that list would be incomplete. Specbandit rejects the combination at startup and exits 1. An empty `--key-failed ""` counts as not set.
+
 ## How it works
 
 - **Push** uses `RPUSH` to append all file paths to a Redis list in a single command, then sets `EXPIRE` on the key (default: 1 week). It also sets a `<key>:published` marker with the same TTL so workers can tell a drained queue from one that was never published.
@@ -296,6 +320,7 @@ A reset with nothing to reset is not an error. Neither command clears the key wh
 - **Full rerun** (when both the shared queue and the rerun key have data): the stale rerun key is removed with `DEL`, then the runner steals from the shared queue and re-records as in a classic run.
 - **Reset** (`push --reset` or `specbandit reset`) removes the queue and its `<key>:published` marker in a single `DEL`, so a producer that runs twice cannot enqueue the work list twice. Rerun and failed keys are untouched.
 - **Run** spawns the configured command via `child_process.spawnSync()` with file paths as arguments. No shell expansion overhead.
+- **Fail-fast** (`--fail-fast`): after the first failed batch, the shared queue list is removed with `DEL` (the `<key>:published` marker stays), and the worker stops.
 - **Exit code** is 0 if every batch passed (or the queue was already empty), 1 if any batch had failures.
 
 ## Development
