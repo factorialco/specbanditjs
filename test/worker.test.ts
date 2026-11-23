@@ -28,9 +28,13 @@ function createOutputCapture(): { stream: Writable; getOutput: () => string } {
 }
 
 function createMockQueue() {
-  return {
+  const queue = {
     push: vi.fn().mockResolvedValue(0),
     steal: vi.fn().mockResolvedValue([]),
+    // The real call is one atomic script; the fake is a steal then a push to
+    // the record key, so tests can stub `steal` and assert on `push`.
+    stealAndRecord: vi.fn(),
+    requeue: vi.fn().mockResolvedValue(0),
     length: vi.fn().mockResolvedValue(0),
     readAll: vi.fn().mockResolvedValue([]),
     delete: vi.fn().mockResolvedValue(1),
@@ -38,7 +42,15 @@ function createMockQueue() {
     markPublished: vi.fn().mockResolvedValue(undefined),
     close: vi.fn().mockResolvedValue(undefined),
     redis: {} as any,
-  } as unknown as RedisQueue
+  }
+  queue.stealAndRecord.mockImplementation(
+    async (key: string, recordKey: string, count: number, ttl: number) => {
+      const files = await queue.steal(key, count)
+      if (files.length > 0) await queue.push(recordKey, files, ttl)
+      return files
+    },
+  )
+  return queue as unknown as RedisQueue
 }
 
 /** A mock Adapter whose runBatch returns success by default. */
@@ -310,9 +322,13 @@ describe.each([
       expect(queue.delete).not.toHaveBeenCalledWith(keyRerun)
     })
 
-    it('stops replay after the first failed batch without touching the shared queue', async () => {
+    it('stops a rerun after the first failed batch and prunes the shared queue', async () => {
       const keyRerun = 'pr-123-run-456-runner-3'
       queue.readAll.mockResolvedValue(['test/x.test.ts', 'test/y.test.ts', 'test/z.test.ts'])
+      queue.steal
+        .mockResolvedValueOnce(['test/x.test.ts', 'test/y.test.ts'])
+        .mockResolvedValueOnce(['test/z.test.ts'])
+        .mockResolvedValueOnce([])
       fixture.failBatch(1)
 
       const exitCode = await makeWorker({ keyRerun, keyTtl: 604_800, failFast: true }).run()
@@ -320,9 +336,8 @@ describe.each([
       expect(exitCode).toBe(1)
       // 3 files with batch size 2 would be 2 batches; fail-fast stops after the first.
       expect(fixture.batchCallCount()).toBe(1)
-      expect(queue.steal).not.toHaveBeenCalled()
-      expect(queue.delete).not.toHaveBeenCalled()
-      expect(capture.getOutput()).toContain('Fail-fast: batch #1 failed. Skipping the remaining replay files.')
+      expect(queue.requeue).toHaveBeenCalledWith(key, keyRerun, 604_800)
+      expect(queue.delete).toHaveBeenCalledWith(key)
     })
   })
 
@@ -384,8 +399,12 @@ describe.each([
       expect(queue.push).not.toHaveBeenCalled()
     })
 
-    it('pushes failed files in replay mode too', async () => {
+    it('pushes failed files on a rerun too', async () => {
       queue.readAll.mockResolvedValue(['test/x.test.ts', 'test/y.test.ts', 'test/z.test.ts'])
+      queue.steal
+        .mockResolvedValueOnce(['test/x.test.ts', 'test/y.test.ts'])
+        .mockResolvedValueOnce(['test/z.test.ts'])
+        .mockResolvedValueOnce([])
 
       fixture.failBatch(2)
 
@@ -452,36 +471,51 @@ describe.each([
     })
   })
 
-  // ── Replay mode ───────────────────────────────────────────────────────
+  // ── Rerun ──────────────────────────────────────────────────────────
 
-  describe('replay mode (key_rerun set, rerun key has data)', () => {
+  describe('rerun (key_rerun set, rerun key has data)', () => {
     const keyRerun = 'pr-123-run-456-runner-3'
     const recordedFiles = ['test/x.test.ts', 'test/y.test.ts', 'test/z.test.ts']
 
     beforeEach(() => {
       queue.readAll.mockResolvedValue(recordedFiles)
+      queue.requeue.mockResolvedValue(3)
+      // The requeued files come back from the shared queue.
+      queue.steal
+        .mockResolvedValueOnce(['test/x.test.ts', 'test/y.test.ts'])
+        .mockResolvedValueOnce(['test/z.test.ts'])
+        .mockResolvedValueOnce([])
     })
 
-    it('runs files from the rerun key in batches', async () => {
+    it('puts the rerun files back on the shared queue, then steals them', async () => {
       const exitCode = await makeWorker({ keyRerun, keyTtl: 604_800 }).run()
 
       expect(exitCode).toBe(0)
+      expect(queue.requeue).toHaveBeenCalledWith(key, keyRerun, 604_800)
+      expect(queue.requeue.mock.invocationCallOrder[0]).toBeLessThan(
+        queue.steal.mock.invocationCallOrder[0],
+      )
       // 3 files with batch_size 2 = 2 batches
       expect(fixture.batchCallCount()).toBe(2)
-      expect(capture.getOutput()).toContain('Replay mode: found 3 files')
-      expect(capture.getOutput()).toContain('Batch #1: running 2 files')
-      expect(capture.getOutput()).toContain('Batch #2: running 1 files')
-      expect(capture.getOutput()).toContain('Replay finished')
+      expect(capture.getOutput()).toContain(`rerun key '${keyRerun}' holds 3 files`)
+      expect(capture.getOutput()).toContain('Put 3 back')
     })
 
-    it('never touches the shared queue', async () => {
+    it('records the stolen batches to the rerun key again', async () => {
       await makeWorker({ keyRerun, keyTtl: 604_800 }).run()
 
-      expect(queue.steal).not.toHaveBeenCalled()
-      expect(queue.push).not.toHaveBeenCalled()
+      expect(queue.stealAndRecord).toHaveBeenCalledWith(key, keyRerun, 2, 604_800)
+      expect(queue.push).toHaveBeenCalledWith(keyRerun, ['test/x.test.ts', 'test/y.test.ts'], 604_800)
+      expect(queue.push).toHaveBeenCalledWith(keyRerun, ['test/z.test.ts'], 604_800)
     })
 
-    it('returns 1 if any replay batch fails', async () => {
+    it('never deletes the rerun key outside the requeue', async () => {
+      await makeWorker({ keyRerun, keyTtl: 604_800 }).run()
+
+      expect(queue.delete).not.toHaveBeenCalled()
+    })
+
+    it('returns 1 if any batch fails', async () => {
       fixture.failBatch(2)
 
       const exitCode = await makeWorker({ keyRerun, keyTtl: 604_800 }).run()
@@ -742,7 +776,7 @@ describe('Worker adapter lifecycle', () => {
 
   // ── Published-marker truth table ──────────────────────────────────────
   // See Worker.run() for the full table. These cover the rows not already
-  // exercised by the steal / record / replay suites above.
+  // exercised by the steal / record / rerun suites above.
   describe('published-marker truth table', () => {
     const keyRerun = 'pr-123-run-456-runner-3'
 
@@ -770,13 +804,14 @@ describe('Worker adapter lifecycle', () => {
       expect(adapter.runBatch).not.toHaveBeenCalled()
     })
 
-    describe('full rerun: both shared queue and rerun key have data', () => {
+    describe('both the shared queue and the rerun key have data', () => {
       beforeEach(() => {
         queue.isPublished.mockResolvedValue(true)
-        queue.readAll.mockResolvedValue(['test/x.test.ts']) // stale rerun memory
-        queue.length.mockResolvedValue(3) // shared queue re-pushed
+        queue.readAll.mockResolvedValue(['test/x.test.ts']) // taken by an earlier attempt
+        queue.length.mockResolvedValue(3) // the earlier attempt did not drain the queue
+        queue.requeue.mockResolvedValue(1)
         queue.steal
-          .mockResolvedValueOnce(['test/a.test.ts', 'test/b.test.ts'])
+          .mockResolvedValueOnce(['test/a.test.ts', 'test/x.test.ts'])
           .mockResolvedValueOnce([])
       })
 
@@ -792,35 +827,70 @@ describe('Worker adapter lifecycle', () => {
         })
       }
 
-      it('resets the rerun key before stealing from the shared queue', async () => {
+      it('puts the rerun files back on the shared queue before stealing', async () => {
         const adapter = createMockAdapter()
 
         const exitCode = await createWorker(adapter).run()
 
         expect(exitCode).toBe(0)
-        expect(queue.delete).toHaveBeenCalledWith(keyRerun)
-        expect(queue.delete.mock.invocationCallOrder[0]).toBeLessThan(
+        expect(queue.requeue).toHaveBeenCalledWith(key, keyRerun, 604_800)
+        expect(queue.requeue.mock.invocationCallOrder[0]).toBeLessThan(
           queue.steal.mock.invocationCallOrder[0],
         )
-        expect(adapter.runBatch).toHaveBeenCalledWith(['test/a.test.ts', 'test/b.test.ts'], 1)
+        expect(adapter.runBatch).toHaveBeenCalledWith(['test/a.test.ts', 'test/x.test.ts'], 1)
       })
 
-      it('re-records the stolen batches to the rerun key', async () => {
+      it('never deletes the rerun key on its own', async () => {
         await createWorker(createMockAdapter()).run()
 
+        expect(queue.delete).not.toHaveBeenCalled()
+      })
+
+      it('records the stolen batches to the rerun key', async () => {
+        await createWorker(createMockAdapter()).run()
+
+        expect(queue.stealAndRecord).toHaveBeenCalledWith(key, keyRerun, 2, 604_800)
         expect(queue.push).toHaveBeenCalledWith(
           keyRerun,
-          ['test/a.test.ts', 'test/b.test.ts'],
+          ['test/a.test.ts', 'test/x.test.ts'],
           604_800,
         )
       })
 
-      it('explains the full-rerun reset instead of crashing', async () => {
+      it('explains the requeue instead of crashing', async () => {
         await createWorker(createMockAdapter()).run()
 
-        expect(capture.getOutput()).toContain('Full rerun')
-        expect(capture.getOutput()).toContain(`resetting '${keyRerun}'`)
+        expect(capture.getOutput()).toContain('Put 1 back')
         expect(capture.getOutput()).not.toContain('ERROR')
+      })
+    })
+
+    describe('a steal whose reply was lost', () => {
+      it('runs the files the rerun key holds but this runner never ran', async () => {
+        queue.isPublished.mockResolvedValue(true)
+        // Empty at the start (record mode); after the queue is exhausted it
+        // holds the batch this runner ran plus one whose reply never arrived.
+        queue.readAll
+          .mockResolvedValueOnce([])
+          .mockResolvedValue(['test/a.test.ts', 'test/lost.test.ts'])
+        queue.steal.mockResolvedValueOnce(['test/a.test.ts']).mockResolvedValue([])
+        const adapter = createMockAdapter()
+
+        const exitCode = await new Worker({
+          key,
+          adapter,
+          batchSize: 2,
+          keyRerun,
+          keyTtl: 604_800,
+          queue: queue as unknown as RedisQueue,
+          output: capture.stream,
+        }).run()
+
+        expect(exitCode).toBe(0)
+        expect(adapter.runBatch).toHaveBeenNthCalledWith(1, ['test/a.test.ts'], 1)
+        expect(adapter.runBatch).toHaveBeenNthCalledWith(2, ['test/lost.test.ts'], 2)
+        expect(adapter.runBatch).toHaveBeenCalledTimes(2)
+        expect(capture.getOutput()).toContain('holds 1 files this runner has not run')
       })
     })
 

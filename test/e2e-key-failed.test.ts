@@ -25,16 +25,28 @@ function createOutputCapture(): { stream: Writable; getOutput: () => string } {
 }
 
 function createMockQueue() {
-  return {
+  const queue = {
     push: vi.fn().mockResolvedValue(0),
     steal: vi.fn().mockResolvedValue([]),
+    // The real call is one atomic script; the fake is a steal then a push to
+    // the record key, so tests can stub `steal` and assert on `push`.
+    stealAndRecord: vi.fn(),
+    requeue: vi.fn().mockResolvedValue(0),
     length: vi.fn().mockResolvedValue(0),
     readAll: vi.fn().mockResolvedValue([]),
     isPublished: vi.fn().mockResolvedValue(true),
     markPublished: vi.fn().mockResolvedValue(undefined),
     close: vi.fn().mockResolvedValue(undefined),
     redis: {} as any,
-  } as unknown as RedisQueue
+  }
+  queue.stealAndRecord.mockImplementation(
+    async (key: string, recordKey: string, count: number, ttl: number) => {
+      const files = await queue.steal(key, count)
+      if (files.length > 0) await queue.push(recordKey, files, ttl)
+      return files
+    },
+  )
+  return queue as unknown as RedisQueue
 }
 
 describe('E2E: --key-failed', () => {
@@ -162,11 +174,12 @@ describe('E2E: --key-failed', () => {
     expect(output).toContain('Batch #2 FAILED')
   })
 
-  it('records failed files in replay mode', async () => {
+  it('records failed files on a rerun', async () => {
     const adapter = new CliAdapter({ command: 'false' })
     const keyRerun = 'e2e-run-123-rerun'
 
     queue.readAll.mockResolvedValue(['spec/a_spec.rb', 'spec/b_spec.rb'])
+    queue.steal.mockResolvedValueOnce(['spec/a_spec.rb', 'spec/b_spec.rb']).mockResolvedValueOnce([])
 
     const worker = new Worker({
       key,
@@ -182,7 +195,7 @@ describe('E2E: --key-failed', () => {
     const exitCode = await worker.run()
 
     expect(exitCode).toBe(1)
-    expect(capture.getOutput()).toContain('Replay mode')
+    expect(capture.getOutput()).toContain('Rerun:')
     expect(queue.push).toHaveBeenCalledWith(
       keyFailed,
       ['spec/a_spec.rb', 'spec/b_spec.rb'],
@@ -408,12 +421,15 @@ describe('E2E: --key-failed with per-file failedFiles', () => {
     expect(queue.push).toHaveBeenCalledWith(keyFailed, ['test/a.test.ts', 'test/b.test.ts'], 7200)
   })
 
-  it('records per-file failures in replay mode', async () => {
+  it('records per-file failures on a rerun', async () => {
     const adapter = createPerFileAdapter({
-      1: ['test/b.test.ts'], // only b fails in the replayed batch
+      1: ['test/b.test.ts'], // only b fails in the rerun batch
     })
 
     queue.readAll.mockResolvedValue(['test/a.test.ts', 'test/b.test.ts', 'test/c.test.ts'])
+    queue.steal
+      .mockResolvedValueOnce(['test/a.test.ts', 'test/b.test.ts', 'test/c.test.ts'])
+      .mockResolvedValueOnce([])
 
     const worker = new Worker({
       key,
@@ -429,7 +445,7 @@ describe('E2E: --key-failed with per-file failedFiles', () => {
     const exitCode = await worker.run()
 
     expect(exitCode).toBe(1)
-    expect(capture.getOutput()).toContain('Replay mode')
+    expect(capture.getOutput()).toContain('Rerun:')
     expect(queue.push).toHaveBeenCalledWith(keyFailed, ['test/b.test.ts'], 7200)
   })
 

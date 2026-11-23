@@ -12,6 +12,7 @@ describe('RedisQueue', () => {
     set: ReturnType<typeof vi.fn>
     exists: ReturnType<typeof vi.fn>
     del: ReturnType<typeof vi.fn>
+    eval: ReturnType<typeof vi.fn>
     quit: ReturnType<typeof vi.fn>
   }
 
@@ -28,6 +29,7 @@ describe('RedisQueue', () => {
       set: vi.fn(),
       exists: vi.fn(),
       del: vi.fn(),
+      eval: vi.fn(),
       quit: vi.fn(),
     }
 
@@ -72,6 +74,43 @@ describe('RedisQueue', () => {
 
       expect(mockRedis.rpush).not.toHaveBeenCalled()
       expect(result).toBe(0)
+    })
+  })
+
+  describe('#stealAndRecord', () => {
+    it('pops and records in one script call', async () => {
+      mockRedis.eval.mockResolvedValue(['spec/a_spec.rb', 'spec/b_spec.rb'])
+
+      const result = await queue.stealAndRecord('my-key', 'my-key-rerun', 2, 3600)
+
+      expect(mockRedis.eval).toHaveBeenCalledOnce()
+      const [script, numKeys, ...args] = mockRedis.eval.mock.calls[0]
+      expect(script).toContain("redis.call('LPOP', KEYS[1], ARGV[1])")
+      expect(script).toContain("redis.call('RPUSH', KEYS[2], file)")
+      expect(numKeys).toBe(2)
+      expect(args).toEqual(['my-key', 'my-key-rerun', 2, 3600])
+      expect(result).toEqual(['spec/a_spec.rb', 'spec/b_spec.rb'])
+    })
+
+    it('returns an empty array when the queue is exhausted', async () => {
+      mockRedis.eval.mockResolvedValue([])
+
+      expect(await queue.stealAndRecord('my-key', 'my-key-rerun', 2, 3600)).toEqual([])
+    })
+  })
+
+  describe('#requeue', () => {
+    it('moves the rerun files back and deletes the rerun key in one script call', async () => {
+      mockRedis.eval.mockResolvedValue(3)
+
+      const moved = await queue.requeue('my-key', 'my-key-rerun', 3600)
+
+      expect(mockRedis.eval).toHaveBeenCalledOnce()
+      const [script, numKeys, ...args] = mockRedis.eval.mock.calls[0]
+      expect(script).toContain("redis.call('DEL', KEYS[2])")
+      expect(numKeys).toBe(2)
+      expect(args).toEqual(['my-key', 'my-key-rerun', 3600])
+      expect(moved).toBe(3)
     })
   })
 

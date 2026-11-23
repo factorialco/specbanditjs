@@ -90,8 +90,15 @@ export class Worker {
    *   No        | any          | any       | Crash — nothing was published
    *   Yes       | empty        | empty     | Ok — worker arriving late
    *   Yes       | populated    | empty     | Ok — classic run (steal + record)
-   *   Yes       | empty        | populated | Ok — classic rerun (replay)
-   *   Yes       | populated    | populated | Ok — full rerun (reset rerun key, steal)
+   *   Yes       | any          | populated | Ok — rerun (requeue, steal + record)
+   *
+   * A populated rerun key means this runner took those files in an earlier
+   * attempt. That attempt may have stopped before the queue drained, so the
+   * queue plus every runner's rerun key is what still holds the files nobody
+   * has run. The runner puts its rerun files back on the queue (skipping any
+   * the queue already holds, as after a fresh push) and steals with the
+   * runners re-run alongside it, so they share the work instead of each
+   * running only its own share again. A runner re-run alone steals its files back.
    *
    * Returns 0 if all batches passed (or nothing to do), 1 on failure or crash.
    */
@@ -111,18 +118,9 @@ export class Worker {
       const rerunFiles = this.keyRerun ? await this.queue.readAll(this.keyRerun) : []
 
       if (rerunFiles.length > 0) {
-        const queueLen = await this.queue.length(this.key)
-        if (queueLen > 0) {
-          // The queue was re-pushed while this runner still carries rerun
-          // memory from a previous run (a full rerun). The stored memory is
-          // stale — discard it and steal from the shared queue like a classic
-          // run, re-recording each stolen batch as we go.
-          this.log(`[specbandit] Shared queue '${this.key}' and rerun key '${this.keyRerun}' both have files. Full rerun: resetting '${this.keyRerun}' and working from '${this.key}'.`)
-          await this.queue.delete(this.keyRerun!)
-          exitCode = await this.runSteal(true)
-        } else {
-          exitCode = await this.runReplay(rerunFiles)
-        }
+        const requeued = await this.queue.requeue(this.key, this.keyRerun!, this.keyTtl)
+        this.log(`[specbandit] Rerun: rerun key '${this.keyRerun}' holds ${rerunFiles.length} files from an earlier attempt. Put ${requeued} back on '${this.key}' (the rest were still queued).`)
+        exitCode = await this.runSteal(true)
       } else {
         // No rerun data: steal from the shared queue, recording each batch to
         // the rerun key when one is configured. Handles both the classic run
@@ -142,54 +140,13 @@ export class Worker {
   }
 
   /**
-   * Replay mode: run a known list of files in local batches.
-   * Used when re-running a failed CI job -- the rerun key already
-   * contains the exact files this runner executed previously.
-   */
-  private async runReplay(files: string[]): Promise<number> {
-    this.log(`[specbandit] Replay mode: found ${files.length} files in rerun key '${this.keyRerun}'.`)
-    this.log('[specbandit] Running previously recorded files (not touching shared queue).')
-
-    let failed = false
-    let batchNum = 0
-
-    for (let i = 0; i < files.length; i += this.batchSize) {
-      const batch = files.slice(i, i + this.batchSize)
-      batchNum++
-      // The batch is listed unconditionally, not behind --verbose. A runner that
-      // dies mid-batch (an OOM kill takes the whole process) prints nothing after
-      // this line, so these names are the only record of what was in flight — and
-      // that is exactly the run where nobody thought to turn verbose on.
-      this.log(`[specbandit] Batch #${batchNum}: running ${batch.length} files`)
-      for (const f of batch) this.log(`  ${f}`)
-
-      const result = await this.adapter.runBatch(batch, batchNum)
-      this.batchResults.push(result)
-
-      if (result.exitCode !== 0) {
-        this.log(`[specbandit] Batch #${batchNum} FAILED (exit code: ${result.exitCode})`)
-        failed = true
-        await this.recordFailed(result)
-        if (this.failFast) {
-          // Replay never touches the shared queue, so there is nothing to prune.
-          this.log(`[specbandit] Fail-fast: batch #${batchNum} failed. Skipping the remaining replay files.`)
-          break
-        }
-      } else {
-        this.log(`[specbandit] Batch #${batchNum} passed.`)
-      }
-    }
-
-    this.log(
-      `[specbandit] Replay finished: ${batchNum} batches. ${failed ? 'SOME FAILED' : 'All passed.'}`
-    )
-    return failed ? 1 : 0
-  }
-
-  /**
    * Steal mode: atomically pop batches from the shared queue.
    * When record is true, each stolen batch is also pushed to the
-   * rerun key so this runner can replay them on a re-run.
+   * rerun key so this runner can run them again on a re-run.
+   *
+   * Once the queue is exhausted, a recording runner also runs any file its
+   * rerun key holds that it has not run: a steal whose reply was lost (a
+   * command timeout, then a retry) recorded files this process never saw.
    */
   private async runSteal(record: boolean): Promise<number> {
     const modeLabel = record ? 'Record' : 'Steal'
@@ -200,21 +157,29 @@ export class Worker {
 
     let failed = false
     let batchNum = 0
+    const ran = new Set<string>()
 
     // eslint-disable-next-line no-constant-condition
     while (true) {
-      const files = await this.queue.steal(this.key, this.batchSize)
+      let files =
+        record && this.keyRerun
+          ? await this.queue.stealAndRecord(this.key, this.keyRerun, this.batchSize, this.keyTtl)
+          : await this.queue.steal(this.key, this.batchSize)
+
+      if (files.length === 0 && record && this.keyRerun) {
+        const unseen = (await this.queue.readAll(this.keyRerun)).filter((f) => !ran.has(f))
+        if (unseen.length > 0) {
+          this.log(`[specbandit] Rerun key '${this.keyRerun}' holds ${unseen.length} files this runner has not run (a lost steal reply). Running them.`)
+          files = unseen.slice(0, this.batchSize)
+        }
+      }
 
       if (files.length === 0) {
         this.log('[specbandit] Queue exhausted. No more files to run.')
         break
       }
 
-      // Record the stolen batch so this runner can replay on re-run
-      if (record && this.keyRerun) {
-        await this.queue.push(this.keyRerun, files, this.keyTtl)
-      }
-
+      for (const f of files) ran.add(f)
       batchNum++
       // The batch is listed unconditionally, not behind --verbose. A runner that
       // dies mid-batch (an OOM kill takes the whole process) prints nothing after
