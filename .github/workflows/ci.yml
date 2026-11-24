@@ -759,6 +759,78 @@ jobs:
 
           exit $ERRORS
 
+      # ── Scenario 9: re-run after an attempt killed mid-run ──
+
+      - name: "Scenario 9: re-run after an attempt killed mid-run"
+        id: scenario9
+        if: always()
+        run: |
+          KEY="e2e-half-drained-${{ github.run_id }}"
+          seq -f "spec_%02g" 1 40 > pushed.txt
+          ERRORS=0
+
+          cat > redis-probe.mjs <<'PROBE'
+          import Redis from 'ioredis'
+          const [, , key, command] = process.argv
+          const redis = new Redis('redis://localhost:6379')
+          const value = command === 'llen' ? await redis.llen(key) : await redis.exists(key)
+          console.log(value)
+          await redis.quit()
+          PROBE
+
+          # Stands in for the test command. A worker given KILL_AT is killed
+          # (SIGKILL, like a CI job timeout) when it starts that batch, so the
+          # batch it took is recorded to its rerun key but never runs.
+          cat > /tmp/run-batch.sh << 'SCRIPT'
+          #!/bin/bash
+          n=$(( $(cat "/tmp/batches-$WORKER" 2>/dev/null || echo 0) + 1 ))
+          echo "$n" > "/tmp/batches-$WORKER"
+          if [ -n "$KILL_AT" ] && [ "$n" -ge "$KILL_AT" ]; then kill -9 "$PPID"; exit 137; fi
+          printf '%s\n' "$@" >> "$RAN_LOG"
+          SCRIPT
+          chmod +x /tmp/run-batch.sh
+
+          node dist/bin.js push --key "$KEY" < pushed.txt
+
+          # Attempt 1: both workers are killed before the queue drains.
+          for w in 1 2; do
+            WORKER=a1-$w KILL_AT=$((w + 1)) RAN_LOG=attempt1.log \
+              node dist/bin.js work --key "$KEY" --key-rerun "${KEY}-w$w" --command /tmp/run-batch.sh --batch-size 4 > a1-worker-$w.log 2>&1 || true
+          done
+          LEFT=$(node redis-probe.mjs "$KEY" llen)
+          echo "Queue after attempt 1: $LEFT files"
+          if [ "$LEFT" -eq 0 ]; then
+            echo "::error::Attempt 1 drained the queue; the scenario needs it half drained"
+            ERRORS=$((ERRORS + 1))
+          fi
+
+          # Attempt 2: same keys, as a CI re-run keeps the run id.
+          PIDS=()
+          for w in 1 2; do
+            WORKER=a2-$w RAN_LOG=attempt2.log \
+              node dist/bin.js work --key "$KEY" --key-rerun "${KEY}-w$w" --command /tmp/run-batch.sh --batch-size 4 > a2-worker-$w.log 2>&1 &
+            PIDS+=($!)
+          done
+          for pid in "${PIDS[@]}"; do wait "$pid" || ERRORS=$((ERRORS + 1)); done
+          cat a2-worker-*.log
+
+          if grep -q "weird state" a2-worker-*.log; then
+            echo "::error::A worker refused to run"
+            ERRORS=$((ERRORS + 1))
+          fi
+          # Every pushed file runs in attempt 2, including those the killed
+          # workers had taken in attempt 1.
+          if ! diff <(sort pushed.txt) <(sort -u attempt2.log); then
+            echo "::error::Attempt 2 did not run exactly the pushed files"
+            ERRORS=$((ERRORS + 1))
+          fi
+
+          echo "## Scenario 9: re-run after an attempt killed mid-run" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Attempt 1 left $LEFT of 40 files queued; attempt 2 ran $(sort -u attempt2.log | wc -l) distinct files." >> "$GITHUB_STEP_SUMMARY"
+
+          exit $ERRORS
+
       # ── Final gate ──
 
       - name: "Check all scenarios passed"
@@ -773,6 +845,7 @@ jobs:
           if [ "${{ steps.scenario6.outcome }}" != "success" ]; then FAILED="$FAILED scenario6"; fi
           if [ "${{ steps.scenario7.outcome }}" != "success" ]; then FAILED="$FAILED scenario7"; fi
           if [ "${{ steps.scenario8.outcome }}" != "success" ]; then FAILED="$FAILED scenario8"; fi
+          if [ "${{ steps.scenario9.outcome }}" != "success" ]; then FAILED="$FAILED scenario9"; fi
           if [ -n "$FAILED" ]; then
             echo "::error::Failed scenarios:$FAILED"
             exit 1

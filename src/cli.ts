@@ -322,7 +322,7 @@ Reset options:
 
   Deletes the queue list and its ':published' marker, leaving the key as if
   nothing had ever been pushed. Per-runner rerun and failed keys are left
-  alone, so a re-run of a single shard can still replay its own files.
+  alone, so a re-run of a single shard can still run its own files again.
 
 Work options:
   --key KEY              Redis queue key (required, or set SPECBANDIT_KEY)

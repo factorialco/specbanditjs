@@ -21,6 +21,37 @@ export interface RedisQueueOptions {
   reconnectAttempts?: number
 }
 
+// KEYS[1] queue, KEYS[2] record key; ARGV[1] count, ARGV[2] TTL. LPOP of a
+// missing key returns false, so an exhausted queue yields an empty result.
+const STEAL_AND_RECORD_SCRIPT = `
+local files = redis.call('LPOP', KEYS[1], ARGV[1])
+if not files then return {} end
+for _, file in ipairs(files) do redis.call('RPUSH', KEYS[2], file) end
+redis.call('EXPIRE', KEYS[2], ARGV[2])
+return files
+`
+
+// KEYS[1] queue, KEYS[2] rerun key; ARGV[1] TTL. A file the queue already
+// holds is not added twice. The queue may have drained (and Redis deleted it),
+// so a recreated list gets the TTL back.
+const REQUEUE_SCRIPT = `
+local queued = {}
+for _, file in ipairs(redis.call('LRANGE', KEYS[1], 0, -1)) do queued[file] = true end
+local moved = 0
+for _, file in ipairs(redis.call('LRANGE', KEYS[2], 0, -1)) do
+  if not queued[file] then
+    redis.call('RPUSH', KEYS[1], file)
+    queued[file] = true
+    moved = moved + 1
+  end
+end
+redis.call('DEL', KEYS[2])
+if moved > 0 and redis.call('TTL', KEYS[1]) == -1 then
+  redis.call('EXPIRE', KEYS[1], ARGV[1])
+end
+return moved
+`
+
 /** Companion marker key signalling that work was published for `key`. */
 function publishedMarkerKey(key: string): string {
   return `${key}:published`
@@ -73,6 +104,30 @@ export class RedisQueue {
       if (result === null || result === undefined) return []
       if (typeof result === 'string') return [result]
       return Array.isArray(result) ? result : []
+    })
+  }
+
+  /**
+   * Steal up to `count` file paths from `key` and append them to `recordKey`
+   * in one atomic step. Popping and recording as two commands leaves a window
+   * where a runner killed in between has taken files that no key holds any
+   * more, so no re-run can ever run them.
+   */
+  async stealAndRecord(key: string, recordKey: string, count: number, ttl: number): Promise<string[]> {
+    return this.withRetries('stealAndRecord', async () => {
+      const result = await this.redis.eval(STEAL_AND_RECORD_SCRIPT, 2, key, recordKey, count, ttl) as string[] | null
+      return Array.isArray(result) ? result : []
+    })
+  }
+
+  /**
+   * Move the files of `rerunKey` back onto the shared queue `key`, skipping
+   * any the queue already holds, and delete `rerunKey`, in one atomic step.
+   * Returns the number of files put back.
+   */
+  async requeue(key: string, rerunKey: string, ttl: number): Promise<number> {
+    return this.withRetries('requeue', async () => {
+      return await this.redis.eval(REQUEUE_SCRIPT, 2, key, rerunKey, ttl) as number
     })
   }
 

@@ -194,7 +194,7 @@ This creates a problem with CI re-runs:
 
 ### The solution: `--key-rerun`
 
-The `--key-rerun` flag gives each matrix runner its own "memory" in Redis. It enables specbandit to **record** which files each runner executed, and **replay** exactly those files on a re-run.
+The `--key-rerun` flag gives each matrix runner its own "memory" in Redis. It enables specbandit to **record** which files each runner took, and to run them again on a re-run.
 
 ```bash
 specbandit work \
@@ -226,8 +226,15 @@ follows this truth table:
 | No | any | any | **Crash (exit 1)** -- nothing was published (never pushed, or TTL expired). |
 | Yes | empty | empty | **Ok** -- worker arriving late. Queue already drained, nothing to do (exit 0). |
 | Yes | populated | empty | **Ok. Classic run** -- steal from the shared queue, recording each batch to the rerun key when `--key-rerun` is set. |
-| Yes | empty | populated | **Ok. Classic rerun** -- replay exactly the recorded files, ignoring the shared queue. |
-| Yes | populated | populated | **Ok. Full rerun** -- the queue was re-pushed while this runner still holds rerun memory from a previous run. The stale rerun key is deleted and the runner steals from the shared queue like a classic run, re-recording as it goes. |
+| Yes | any | populated | **Ok. Rerun** -- put the recorded files back on the shared queue (skipping any it already holds), then steal and record like a classic run. |
+
+A populated rerun key means the runner took those files in an earlier attempt. That attempt may have been killed (a job timeout, a cancel) before the shared queue drained, so the files nobody has run are spread over the queue and every runner's rerun key. Putting the rerun files back covers every case:
+
+- **One runner re-run** (a failed shard): it puts its own files back and steals them again, so it runs exactly what it ran before.
+- **Several runners re-run, queue half drained**: each puts its files back and they share the queue, so no runner is left with more than its share and every file runs.
+- **Queue pushed again** (`push --reset` on a full re-run): the recorded files are already queued, so none are added twice and the stale memory is dropped.
+
+Deleting the rerun key instead would lose the files a killed runner had taken from a queue that was not pushed again: the job would pass with those files never run.
 
 ### Complete GitHub Actions example with re-run support
 
@@ -285,7 +292,7 @@ There is also a standalone command, for callers that clean up separately from th
 specbandit reset --key "pr-42-run-100"
 ```
 
-Both leave the per-runner rerun keys and the failed keys alone, so a single-runner re-run can still replay its own files. A runner that finds data in both the shared queue and its rerun key is the **full rerun** case in the table above, and it resets its own memory.
+Both leave the per-runner rerun keys and the failed keys alone, so a single-runner re-run can still run its own files again. A runner with data in its rerun key puts those files back on the queue, skipping the ones the new push already holds (the **rerun** row in the table above).
 
 A reset with nothing to reset is not an error. Neither command clears the key when there is nothing to push in its place: dropping the marker on its own would make every worker on that key crash as "never published".
 
@@ -307,17 +314,14 @@ The `<key>:published` marker stays. A worker that checks the queue after the pru
 
 Specbandit sees results per batch, so the worker stops after the failing batch, not after the failing test. To also stop inside a batch, forward the option of your test runner, for example `-- --bail` for Jest.
 
-In replay mode, the worker stops after the first failed batch and skips the remaining replay files. Replay never touches the shared queue, so there is nothing to prune.
-
 `--fail-fast` cannot be used with `--key-failed`. The failed key feeds a later retry pass, and fail-fast stops before most files run, so that list would be incomplete. Specbandit rejects the combination at startup and exits 1. An empty `--key-failed ""` counts as not set.
 
 ## How it works
 
 - **Push** uses `RPUSH` to append all file paths to a Redis list in a single command, then sets `EXPIRE` on the key (default: 1 week). It also sets a `<key>:published` marker with the same TTL so workers can tell a drained queue from one that was never published.
-- **Steal** uses `LPOP key count` (Redis 6.2+), which atomically pops up to N elements. No Lua scripts, no locks, no race conditions.
-- **Record** (when `--key-rerun` is set): after each steal, the batch is also `RPUSH`ed to the per-runner rerun key with the same TTL.
-- **Replay** (when `--key-rerun` has data and the shared queue is drained): reads all files from the rerun key via `LRANGE` (non-destructive), splits into batches, and runs them locally.
-- **Full rerun** (when both the shared queue and the rerun key have data): the stale rerun key is removed with `DEL`, then the runner steals from the shared queue and re-records as in a classic run.
+- **Steal** uses `LPOP key count` (Redis 6.2+), which atomically pops up to N elements.
+- **Record** (when `--key-rerun` is set): the steal and the `RPUSH` to the per-runner rerun key run in one Lua script, so no file is ever out of both keys, even if the runner is killed between the two. Once the queue is exhausted, the runner also runs any file its rerun key holds that it has not run: a steal whose reply was lost to a command timeout, then retried, recorded files the runner never received.
+- **Rerun** (when `--key-rerun` has data): one Lua script appends the rerun files the shared queue does not already hold to it and deletes the rerun key. The runner then steals and records as in a classic run.
 - **Reset** (`push --reset` or `specbandit reset`) removes the queue and its `<key>:published` marker in a single `DEL`, so a producer that runs twice cannot enqueue the work list twice. Rerun and failed keys are untouched.
 - **Run** spawns the configured command via `child_process.spawnSync()` with file paths as arguments. No shell expansion overhead.
 - **Fail-fast** (`--fail-fast`): after the first failed batch, the shared queue list is removed with `DEL` (the `<key>:published` marker stays), and the worker stops.
